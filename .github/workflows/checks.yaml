@@ -1,0 +1,64 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: fleet_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fleet_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_TEST_URL: postgres://postgres:postgres@localhost:5432/fleet_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run format:check
+      - run: npm test
+      - run: node scripts/setup-local.mjs
+      - run: docker compose --profile tools config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+          GATEWAY_SECRET: ci-only-gateway-secret-at-least-32-characters
+          REALTIME_SECRET: ci-only-realtime-secret-at-least-32-characters
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/gps-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go test ./internal/protocol -run '^$' -fuzz FuzzFrame -fuzztime 10s
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/setup-local.mjs
+      - run: docker compose up --build -d --wait --wait-timeout 180
+      - run: docker compose run --rm --build smoke
+      - if: failure()
+        run: docker compose logs --tail=100 migrate api realtime gateway nginx
+      - if: always()
+        run: docker compose down --remove-orphans

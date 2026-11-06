@@ -1,0 +1,43 @@
+{
+  "name": "fleet-tracking",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/backend-api",
+    "apps/realtime-server",
+    "packages/contracts"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "dev:api": "node --import tsx --watch apps/backend-api/src/server.ts",
+    "dev:realtime": "node --import tsx --watch apps/realtime-server/src/server.ts",
+    "db:migrate": "node --import tsx scripts/migrate.ts",
+    "admin:create": "node --import tsx scripts/create-admin.ts",
+    "format": "prettier --write \"apps/**/*.{ts,js,css}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"apps/**/*.{ts,js,css}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\"",
+    "test:local": "node --import tsx --test --experimental-test-isolation=none tests/*.test.ts",
+    "setup:local": "node scripts/setup-local.mjs",
+    "smoke:docker": "docker compose run --rm --build smoke"
+  },
+  "dependencies": {
+    "express": "5.2.1",
+    "ejs": "3.1.10",
+    "pg": "8.23.0",
+    "zod": "3.25.76",
+    "pino": "9.13.1",
+    "express-rate-limit": "7.5.1",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.7.2",
+    "dotenv": "16.6.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "tsx": "4.23.15",
+    "@types/node": "22.20.1",
+    "@types/express": "5.0.1",
+    "@types/ejs": "3.1.5",
+    "@types/pg": "8.20.0",
+    "prettier": "3.8.1"
+  }
+}
