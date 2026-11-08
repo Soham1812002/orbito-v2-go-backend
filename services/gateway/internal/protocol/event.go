@@ -27,7 +27,13 @@ type Source struct {
 	SessionID string  `json:"sessionId"`
 	Raw       string  `json:"raw,omitempty"`
 }
+type Trace struct {
+	TraceID string `json:"traceId"`
+	SpanID  string `json:"spanId"`
+}
+
 type Event struct {
+	Trace         *Trace         `json:"trace,omitempty"`
 	SchemaVersion int            `json:"schemaVersion"`
 	EventID       string         `json:"eventId"`
 	Identifier    string         `json:"deviceIdentifier"`

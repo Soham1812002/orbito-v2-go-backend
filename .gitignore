@@ -33,3 +33,6 @@ Desktop.ini
 tmp/
 
 .eslintcache
+
+# Host operational logs
+logs/

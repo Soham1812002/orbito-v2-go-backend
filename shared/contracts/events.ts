@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { traceContext } from './tracing.js';
 
 export const decodedEvent = z
   .object({
     schemaVersion: z.literal(1),
     eventId: z.string().uuid(),
+    trace: traceContext.optional(),
     deviceIdentifier: z.string().regex(/^\d{15}$/),
     protocol: z.enum(['MARKON_AIS140', 'CONCOX']),
     profile: z.string().min(1).max(80),

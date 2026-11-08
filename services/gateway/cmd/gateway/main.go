@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fleet/gateway/internal/observability"
 	"fleet/gateway/internal/protocol"
 	"fleet/gateway/internal/spool"
 	"fmt"
@@ -46,13 +47,14 @@ func env(name, fallback string) string {
 	}
 	return fallback
 }
-func (g *gateway) lookup(ctx context.Context, imei string) (device, error) {
+func (g *gateway) lookup(ctx context.Context, imei string, trace *observability.Trace) (device, error) {
 	lookupCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(lookupCtx, "GET", g.api+"/internal/v1/device-registry?imei="+url.QueryEscape(imei), nil)
 	if err != nil {
 		return device{}, err
 	}
+	req.Header.Set("traceparent", trace.Child().Header())
 	req.Header.Set("Authorization", "Bearer "+g.secret)
 	res, err := g.client.Do(req)
 	if err != nil {
@@ -77,6 +79,9 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 	defer g.wg.Done()
 	defer conn.Close()
 	session := protocol.UUID()
+	sessionLog := slog.With("sessionId", session, "protocol", family)
+	sessionLog.Info("Tracker session opened", "event", "session.opened")
+	defer sessionLog.Info("Tracker session closed", "event", "session.closed")
 	identifier, profile := "", ""
 	registered := device{}
 	lastLookup := time.Time{}
@@ -129,6 +134,7 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 			}
 			if err != nil {
 				bad++
+				sessionLog.Warn("Frame rejected", "event", "frame.rejected", "outcome", "rejected")
 				if bad > 10 {
 					return
 				}
@@ -136,6 +142,8 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 			}
 			incompleteSince = time.Time{}
 			now := time.Now()
+			trace := observability.NewTrace()
+			packetLog := sessionLog.With("traceId", trace.TraceID, "spanId", trace.SpanID)
 			var event protocol.Event
 			var ack []byte
 			if family == "MARKON_AIS140" {
@@ -149,19 +157,22 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 			}
 			if err != nil {
 				bad++
-				slog.Warn("packet rejected", "family", family, "reason", err.Error())
+				packetLog.Warn("packet rejected", "event", "packet.rejected", "outcome", "rejected", "family", family, "reason", err.Error())
 				if bad > 10 {
 					return
 				}
 				continue
 			}
+			event.Trace = &protocol.Trace{TraceID: trace.TraceID, SpanID: trace.SpanID}
+			packetLog = packetLog.With("ingestionEventId", event.EventID, "packetType", event.PacketType)
+			packetLog.Debug("Packet decoded", "event", "packet.decoded")
 			if identifier == "" {
 				if event.EventType != "LOGIN" || !protocol.ValidIMEI(event.Identifier) {
 					return
 				}
-				registered, err = g.lookup(ctx, event.Identifier)
+				registered, err = g.lookup(ctx, event.Identifier, trace)
 				if err != nil {
-					slog.Warn("device login rejected", "reason", err.Error())
+					packetLog.Warn("device login rejected", "event", "session.login.rejected", "outcome", "rejected", "reason", err.Error())
 					return
 				}
 				profile = registered.Profile
@@ -180,7 +191,7 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 				}
 				g.mu.Unlock()
 				if exists {
-					slog.Warn("duplicate live session rejected")
+					packetLog.Warn("duplicate live session rejected", "event", "session.duplicate", "outcome", "rejected")
 					return
 				}
 				lastLookup = now
@@ -192,7 +203,7 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 				event.Identifier = identifier
 				event.Profile = profile
 				if now.Sub(lastLookup) > 30*time.Second {
-					updated, lookupErr := g.lookup(ctx, identifier)
+					updated, lookupErr := g.lookup(ctx, identifier, trace)
 					lastLookup = now
 					if lookupErr != nil {
 						if errors.Is(lookupErr, errUnregistered) {
@@ -201,7 +212,7 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 						if now.Sub(lastConfirmed) > 15*time.Minute {
 							return
 						}
-						slog.Warn("registry unavailable; temporarily using session registration")
+						packetLog.Warn("registry unavailable; temporarily using session registration", "event", "registry.unavailable", "outcome", "retry")
 					} else {
 						if !updated.Enabled || updated.Profile != registered.Profile {
 							return
@@ -220,16 +231,19 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 				}
 			}
 			if err = g.queue.Put(event.EventID, event); err != nil {
-				slog.Error("durable admission failed", "error", err)
+				packetLog.Error("durable admission failed", "event", "packet.admission.failed", "outcome", "failure", "error", err)
 				return
 			}
+			packetLog.Info("Packet durably admitted", "event", "packet.admitted")
 			if len(ack) > 0 {
 				if err = conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 					return
 				}
 				if _, err = io.Copy(conn, bytes.NewReader(ack)); err != nil {
+					packetLog.Warn("ACK write failed", "event", "packet.ack.failed", "outcome", "failure")
 					return
 				}
+				packetLog.Debug("ACK written to connection", "event", "packet.ack.written")
 			}
 			// A session may upload stored history quickly; bound work without one goroutine per packet.
 			select {
@@ -253,10 +267,28 @@ func (g *gateway) forward(ctx context.Context) {
 			}
 			continue
 		}
+		var original struct {
+			EventID string               `json:"eventId"`
+			Trace   *observability.Trace `json:"trace"`
+		}
+		if err = json.Unmarshal(data, &original); err != nil {
+			slog.Error("Invalid spool record", "event", "spool.invalid", "outcome", "failure")
+			if err = g.queue.Quarantine(name); err != nil {
+				slog.Error("Quarantine failed", "error", err)
+			}
+			continue
+		}
+		if original.Trace == nil {
+			original.Trace = observability.LegacyTrace(original.EventID)
+		}
+		attemptTrace := original.Trace.Child()
+		forwardLog := slog.With("traceId", attemptTrace.TraceID, "spanId", attemptTrace.SpanID, "ingestionEventId", original.EventID)
+		forwardLog.Debug("Forwarding packet", "event", "packet.forward.started")
 		req, err := http.NewRequestWithContext(ctx, "POST", g.api+"/internal/v1/events", bytes.NewReader(data))
 		if err != nil {
 			return
 		}
+		req.Header.Set("traceparent", attemptTrace.Header())
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+g.secret)
 		res, err := g.client.Do(req)
@@ -269,10 +301,6 @@ func (g *gateway) forward(ctx context.Context) {
 			}
 			if res.StatusCode == 200 {
 				decodeErr := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&result)
-				var original struct {
-					EventID string `json:"eventId"`
-				}
-				_ = json.Unmarshal(data, &original)
 				success = decodeErr == nil && result.Persisted && result.EventID == original.EventID
 			}
 			permanent = res.StatusCode == 400 || res.StatusCode == 422 || res.StatusCode == 409
@@ -285,11 +313,12 @@ func (g *gateway) forward(ctx context.Context) {
 					return
 				}
 			}
+			forwardLog.Info("Backend committed packet", "event", "packet.forward.committed")
 			backoff = time.Second
 			continue
 		}
 		if permanent {
-			slog.Error("event quarantined; operator action required", "file", name)
+			forwardLog.Error("event quarantined; operator action required", "event", "packet.quarantined", "outcome", "failure", "file", name)
 			if err = g.queue.Quarantine(name); err != nil {
 				slog.Error("quarantine failed", "error", err)
 				if !wait(ctx, time.Second) {
@@ -298,7 +327,7 @@ func (g *gateway) forward(ctx context.Context) {
 			}
 			continue
 		}
-		slog.Warn("event forwarding retry", "error", err)
+		forwardLog.Warn("event forwarding retry", "event", "packet.forward.retry", "outcome", "retry", "error", err)
 		if !wait(ctx, backoff+time.Duration(rand.IntN(500))*time.Millisecond) {
 			return
 		}
@@ -317,23 +346,23 @@ func wait(ctx context.Context, d time.Duration) bool {
 	}
 }
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	observability.Configure()
+	slog.Info("Gateway starting", "event", "service.starting")
 	secret := os.Getenv("GATEWAY_SECRET")
 	if len(secret) < 32 {
-		slog.Error("GATEWAY_SECRET must contain at least 32 characters")
-		os.Exit(1)
+		observability.Fatal("service.config.invalid", "GATEWAY_SECRET must contain at least 32 characters")
 	}
 	api := strings.TrimRight(env("API_URL", "http://localhost:3000"), "/")
 	if _, err := url.ParseRequestURI(api); err != nil {
-		panic(err)
+		observability.Fatal("service.start.failed", "Gateway startup operation failed")
 	}
 	capBytes, err := strconv.ParseInt(env("SPOOL_MAX_BYTES", "1073741824"), 10, 64)
 	if err != nil || capBytes < 1048576 {
-		panic("invalid spool cap")
+		observability.Fatal("service.config.invalid", "Invalid spool capacity")
 	}
 	queue, err := spool.Open(env("SPOOL_DIR", "./data/spool"), capBytes)
 	if err != nil {
-		panic(err)
+		observability.Fatal("service.start.failed", "Gateway startup operation failed")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -365,7 +394,7 @@ func main() {
 	for _, spec := range []struct{ addr, family string }{{env("MARKON_ADDR", ":5001"), "MARKON_AIS140"}, {env("CONCOX_ADDR", ":5002"), "CONCOX"}} {
 		listener, err := net.Listen("tcp", spec.addr)
 		if err != nil {
-			panic(err)
+			observability.Fatal("service.start.failed", "Gateway startup operation failed")
 		}
 		listeners = append(listeners, listener)
 		g.wg.Add(1)
@@ -387,6 +416,7 @@ func main() {
 		}(listener, spec.family)
 	}
 	<-ctx.Done()
+	slog.Info("Gateway stopping", "event", "service.stopping")
 	for _, listener := range listeners {
 		listener.Close()
 	}

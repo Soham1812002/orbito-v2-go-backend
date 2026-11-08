@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1
+FROM golang:1.27-alpine AS log-build
+WORKDIR /log-src
+COPY utils/logging/ ./
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /logrunner .
+
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -17,6 +22,8 @@ COPY --from=build /app/dist ./
 COPY services/backend/src/views ./services/backend/src/views
 COPY services/backend/src/public ./services/backend/src/public
 COPY services/backend/migrations ./services/backend/migrations
+COPY --from=log-build /logrunner /usr/local/bin/logrunner
+ENTRYPOINT ["/usr/local/bin/logrunner"]
 USER node
 EXPOSE 3000
 CMD ["node","services/backend/src/server.js"]

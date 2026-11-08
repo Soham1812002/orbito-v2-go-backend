@@ -12,14 +12,39 @@ x-node: &node
     driver: json-file
     options: { max-size: '10m', max-file: '3' }
 services:
+  log-init:
+    image: alpine:3.23
+    restart: 'no'
+    network_mode: none
+    environment:
+      LOG_GID: ${LOG_GID:-1000}
+    volumes: ['${LOG_HOST_DIR:-./logs}:/logs']
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /logs/backend /logs/realtime /logs/migrate /logs/smoke /logs/gateway /logs/proxy /logs/database
+        chown 1000:1000 /logs/backend /logs/realtime /logs/migrate /logs/smoke
+        chown 10001:10001 /logs/gateway
+        chgrp "$${LOG_GID}" /logs/backend /logs/realtime /logs/migrate /logs/smoke /logs/gateway /logs/proxy /logs/database
+        chmod 2750 /logs/backend /logs/realtime /logs/migrate /logs/smoke /logs/gateway /logs/proxy /logs/database
   database:
-    image: postgis/postgis:16-3.5
+    build:
+      context: .
+      dockerfile: services/database/Dockerfile
     mem_limit: 1g
     environment:
+      SERVICE_NAME: database
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
       POSTGRES_DB: fleet
       POSTGRES_USER: fleet
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes: [pgdata:/var/lib/postgresql/data, '${LOG_HOST_DIR:-./logs}/database:/logs']
+    depends_on:
+      log-init: { condition: service_completed_successfully }
     networks: [data]
     restart: unless-stopped
     stop_grace_period: 60s
@@ -33,14 +58,27 @@ services:
     <<: *node
     restart: 'no'
     command: [node, utils/scripts/migrate.js]
+    volumes: ['${LOG_HOST_DIR:-./logs}/migrate:/logs']
     environment:
+      SERVICE_NAME: migrate
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
       DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
     networks: [data]
     depends_on:
       database: { condition: service_healthy }
   backend:
     <<: *node
+    volumes: ['${LOG_HOST_DIR:-./logs}/backend:/logs']
     environment:
+      SERVICE_NAME: backend
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
       DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
       GATEWAY_SECRET: ${GATEWAY_SECRET:?Set GATEWAY_SECRET}
       REALTIME_SECRET: ${REALTIME_SECRET:?Set REALTIME_SECRET}
@@ -65,14 +103,23 @@ services:
       retries: 3
   realtime:
     <<: *node
+    volumes: ['${LOG_HOST_DIR:-./logs}/realtime:/logs']
     build:
       context: .
       dockerfile: services/realtime/Dockerfile
     environment:
+      SERVICE_NAME: realtime
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
       API_URL: http://backend:3000
       REALTIME_SECRET: ${REALTIME_SECRET}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
     networks: [web, services]
+    depends_on:
+      log-init: { condition: service_completed_successfully }
     healthcheck:
       test:
         [
@@ -85,17 +132,25 @@ services:
       timeout: 6s
       retries: 3
   gateway:
-    build: services/gateway
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
     mem_limit: 256m
     pids_limit: 128
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
+      SERVICE_NAME: gateway
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
       API_URL: http://backend:3000
       GATEWAY_SECRET: ${GATEWAY_SECRET}
       ALLOW_UNVERIFIED_MARKON: ${ALLOW_UNVERIFIED_MARKON:-false}
     ports: ['5001:5001/tcp', '5002:5002/tcp']
-    volumes: [spool:/spool]
+    volumes: [spool:/spool, '${LOG_HOST_DIR:-./logs}/gateway:/logs']
     networks: [services]
     depends_on:
       backend: { condition: service_healthy }
@@ -105,7 +160,13 @@ services:
     restart: 'no'
     profiles: [tools]
     command: [node, utils/scripts/smoke.js]
+    volumes: ['${LOG_HOST_DIR:-./logs}/smoke:/logs']
     environment:
+      SERVICE_NAME: smoke
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      LOG_LEVEL: ${LOG_LEVEL:-trace}
       NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
@@ -122,7 +183,16 @@ services:
       realtime: { condition: service_healthy }
       proxy: { condition: service_started }
   proxy:
-    build: services/proxy
+    build:
+      context: .
+      dockerfile: services/proxy/Dockerfile
+    environment:
+      SERVICE_NAME: proxy
+      NODE_ENV: ${NODE_ENV:-development}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_MAX_FILES: ${LOG_MAX_FILES:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+    volumes: ['${LOG_HOST_DIR:-./logs}/proxy:/logs']
     mem_limit: 128m
     ports: ['80:80']
     networks: [web]

@@ -1,17 +1,26 @@
 import type { SqlExecutor } from '../../database/executor.js';
 import type { OutboxEntry } from './outbox.ports.js';
+import type { DecodedEvent } from '../../../../../shared/contracts/events.js';
 
 export function outboxWriter(db: SqlExecutor, newId: () => string) {
   return {
-    async enqueue(org: string, device: string, log: string) {
+    async enqueue(org: string, device: string, log: string, event: DecodedEvent) {
       await db.query(
         `
       INSERT INTO
-        realtime_outbox (id, organization_id, device_id, log_id)
+        realtime_outbox (id, organization_id, device_id, log_id, ingestion_event_id, trace_id, span_id)
       VALUES
-        ($1, $2, $3, $4)
+        ($1, $2, $3, $4, $5, $6, $7)
     `,
-        [newId(), org, device, log],
+        [
+          newId(),
+          org,
+          device,
+          log,
+          event.eventId,
+          event.trace?.traceId ?? null,
+          event.trace?.spanId ?? null,
+        ],
       );
     },
   };

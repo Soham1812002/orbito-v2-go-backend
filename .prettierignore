@@ -12,3 +12,6 @@ package-lock.json
 skills/
 # Applied migrations are checksum-protected and must not be reformatted.
 services/backend/migrations/
+
+# Host operational logs
+logs/

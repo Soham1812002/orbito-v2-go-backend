@@ -12,6 +12,8 @@ services/
     Dockerfile
   gateway/                   Go TCP listeners, decoders and durable spool
     Dockerfile
+  database/                  PostGIS image with the shared log runner
+    Dockerfile
   proxy/                     HTTP routing for pages, API and Socket.IO
     Dockerfile
     nginx.conf
@@ -19,11 +21,12 @@ shared/                      Transport contracts, errors, security and logging
 utils/
   scripts/                   Setup, migration, administrator and smoke commands
   eslint/                    Architecture lint rule
+  logging/                   Static container log runner and rotation tests
 tests/                      Unit, HTTP, Socket.IO and PostGIS tests
 compose.yaml                 One HTTP-only Docker Compose configuration
 ```
 
-Each custom service owns its Dockerfile. Backend and realtime builds use the repository root as their build context because they use `shared/` and the root lockfile. The gateway and proxy use their own service directories as build contexts. PostgreSQL uses the existing PostGIS image directly.
+Each service owns its Dockerfile. Builds use the repository root as context so every image can include the shared static log runner from `utils/logging/`. The database image extends PostGIS only to add this runner; the database data volume and PostgreSQL entrypoint remain in use.
 
 Runtime code stays in feature modules and `shared/`; `utils/` holds operational and development tools. It is not a generic container for business logic.
 
@@ -93,6 +96,43 @@ The gateway reads packet types and preserves device-provided alert identifiers/c
 - A separate server-calculated alert/rule engine and SMS/email/push delivery are outside the current two-page scope. Received hardware alarms are available in the decoded log page.
 
 The protocol PDFs and evidence/gaps are in `.docs/` and [.docs/IMPLEMENTATION_PLAN.md](.docs/IMPLEMENTATION_PLAN.md). IMEI is an identifier, not authentication. Test the actual hardware/firmware before declaring a profile supported.
+
+## Operational logs and tracing
+
+Logging starts automatically with `docker compose up -d --build --wait`. All application levels are enabled by default (`LOG_LEVEL=trace`): `trace`, `debug`, `info`, `warn`, `error`, and `fatal`. Lower-volume deployments can set `LOG_LEVEL=info`. Native database and proxy diagnostics retain their normal infrastructure verbosity; application debug does not enable SQL statement or raw packet logging.
+
+Each container writes JSON Lines to the console and to its own directory on the **host running Docker**:
+
+```text
+logs/backend/current.jsonl
+logs/realtime/current.jsonl
+logs/gateway/current.jsonl
+logs/proxy/current.jsonl
+logs/database/current.jsonl
+logs/migrate/current.jsonl
+logs/smoke/current.jsonl       # when the optional smoke tool runs
+```
+
+`LOG_HOST_DIR` defaults to `./logs` beside Compose. Set it to an absolute path such as `/var/log/fleet` for a hosted instance. Files survive container replacement and are excluded from Git and image build contexts. `log-init` prepares service-specific directories; on Linux set `LOG_GID` to your operator group ID for read access. Files are mode 0640 and directories 2750, subject to host filesystem support. Container users retain ownership of their own directories.
+
+Defaults are 10 MiB per file (`LOG_MAX_BYTES=10485760`), five numbered archives (`LOG_MAX_FILES=5`) and seven days (`LOG_RETENTION_DAYS=7`). Rotation occurs by size/age; expired archives are cleaned at startup, rotation and periodic maintenance. Retention is file-based, not deletion of individual old records inside an active file. Every service has an independent writer and bounded buffer. Disk errors fall back to console diagnostics; sustained output congestion can drop records with a warning rather than block tracker ingestion. These logs are diagnostic records, not a lossless audit archive.
+
+Records contain UTC `timestamp`, string `level`, `service`, `environment`, `event`, `message` and `outcome`, with operation IDs and duration where available. `outcome` distinguishes success, failure, rejection, duplicate handling and retries. A successfully processed hardware alarm is not an application error. Infrastructure records are normalized, but native PostgreSQL messages do not carry application trace IDs.
+
+Gateway intake creates a trace per packet, preserves it in the durable spool, and propagates it through authenticated internal HTTP. The backend persists the trace and original packet event ID with the outbox in the same transaction; delivery retries and realtime emissions retain that trace after restart. `ingestionEventId` identifies the original packet; `outboxId` identifies its notification. Existing realtime `eventId` semantics remain unchanged. Legacy records without tracing metadata remain readable. A tracker retransmission can start a new trace; duplicate handling is logged. Socket emission does not prove that a browser rendered the notification.
+
+Public requests receive server-owned trace IDs. The proxy supplies the request ID; API responses expose `X-Request-ID` and `X-Trace-ID`. Internal calls use validated W3C `traceparent` after service authentication. Trace IDs are correlation metadata and grant no access.
+
+```bash
+docker compose logs -f backend gateway realtime
+npm run logs:query -- --trace <traceId>
+npm run logs:query -- --service gateway --level error
+npm run logs:query -- --event ingestion.committed
+```
+
+The query tool streams matching JSONL records from host files; output follows file order rather than guaranteed causal ordering. Running Node services directly outside Docker writes structured console logs; automatic host-file capture is supplied by the container runner.
+
+Operational logging uses an allowlist and safe error type/code fields. It excludes credentials, cookies, authorization headers, raw packets, SIM information, coordinates, full IMEIs and SQL parameters. Detailed device payloads remain in the existing access-controlled device log storage. Native infrastructure failure text is summarized to avoid embedding request input or SQL. Business audit records and the durable spool remain separate.
 
 ## Architecture and code quality
 

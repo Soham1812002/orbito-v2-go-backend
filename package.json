@@ -20,7 +20,8 @@
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix --max-warnings=0",
     "fix": "npm run lint:fix && npm run format",
-    "quality": "npm run check && npm run lint && npm run format:check"
+    "quality": "npm run check && npm run lint && npm run format:check",
+    "logs:query": "node --import tsx utils/scripts/logs.ts"
   },
   "dependencies": {
     "dotenv": "16.6.1",

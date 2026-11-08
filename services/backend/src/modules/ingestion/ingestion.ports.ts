@@ -33,7 +33,7 @@ export interface IngestionTransaction {
     time: string | null,
   ): Promise<void>;
   updateIgnition(vehicle: string, ignition: boolean, time: string): Promise<void>;
-  enqueue(d: RegisteredDevice, log: string): Promise<void>;
+  enqueue(d: RegisteredDevice, log: string, event: DecodedEvent): Promise<void>;
 }
 
 export interface RegistryEntry {

@@ -28,6 +28,12 @@ test(
           'utf8',
         ),
       );
+      await pool.query(
+        await readFile(
+          new URL('../services/backend/migrations/002_outbox_tracing.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const org = randomUUID();
       const otherOrg = randomUUID();
       const vehicle = randomUUID();
@@ -52,7 +58,18 @@ test(
       const e = event();
       const cfg = { ALLOW_UNVERIFIED_MARKON: 'false' as const };
 
+      e.trace = { traceId: 'a'.repeat(32), spanId: 'b'.repeat(16) };
       assert.equal((await ingest(pool, e, cfg)).duplicate, false);
+      const persistedTrace = (
+        await pool.query(
+          'SELECT ingestion_event_id,trace_id,span_id FROM realtime_outbox WHERE ingestion_event_id=$1',
+          [e.eventId],
+        )
+      ).rows[0];
+
+      assert.equal(persistedTrace.ingestion_event_id, e.eventId);
+      assert.equal(persistedTrace.trace_id, e.trace.traceId);
+      assert.match(persistedTrace.span_id, /^[a-f0-9]{16}$/);
       assert.equal((await ingest(pool, e, cfg)).duplicate, true);
       assert.equal((await ingest(pool, { ...e, eventId: randomUUID() }, cfg)).duplicate, true);
       const old = {

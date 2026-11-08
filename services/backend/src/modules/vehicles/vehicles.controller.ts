@@ -3,6 +3,7 @@ import { vehicleInput, vehiclePatch } from '../../../../../shared/contracts/flee
 import { currentActor } from '../../http/current-actor.js';
 import { vehicleId, vehicleSearch } from './vehicles.schemas.js';
 import type { VehicleService } from './vehicles.service.js';
+import { logger } from '../../../../../shared/logging/logger.js';
 
 export function vehicleController(service: VehicleService) {
   return {
@@ -12,7 +13,10 @@ export function vehicleController(service: VehicleService) {
       res.json(await service.list(currentActor(res), q.q, q.offset));
     }) satisfies RequestHandler,
     register: (async (req, res) => {
-      res.status(201).json(await service.register(currentActor(res), vehicleInput.parse(req.body)));
+      const result = await service.register(currentActor(res), vehicleInput.parse(req.body));
+
+      logger.info({ event: 'vehicle.registered' }, 'Vehicle and tracker registration committed');
+      res.status(201).json(result);
     }) satisfies RequestHandler,
     update: (async (req, res) => {
       await service.update(
@@ -20,6 +24,7 @@ export function vehicleController(service: VehicleService) {
         vehicleId.parse(req.params.id),
         vehiclePatch.parse(req.body),
       );
+      logger.info({ event: 'vehicle.updated' }, 'Vehicle update committed');
       res.json({ ok: true });
     }) satisfies RequestHandler,
   };

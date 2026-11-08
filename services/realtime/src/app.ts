@@ -9,12 +9,13 @@ import { socketConnections } from './sockets/fanout.adapter.js';
 import { createFanoutService } from './services/fanout.service.js';
 import { eventRoutes } from './http/events.routes.js';
 import { healthRoutes } from './http/health.routes.js';
+import { requestId } from '../../../shared/http/request-id.js';
 
 export function createRealtime(client: BackendClient, config: { secret: string; origin: string }) {
   const app = express();
 
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '16kb' }));
+  app.use(requestId, express.json({ limit: '16kb' }));
   const server = createServer(app);
   const io = new Server<ClientEvents, ServerEvents, ClientEvents, SocketData>(server, {
     cors: { origin: config.origin, credentials: true },

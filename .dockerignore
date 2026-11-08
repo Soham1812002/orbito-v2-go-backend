@@ -19,9 +19,10 @@ dist/
 .cache/
 .tmp/
 tmp/
-services/gateway/
-services/proxy/
 
 .eslintcache
 
 utils/eslint/
+
+# Host operational logs
+logs/

@@ -3,6 +3,10 @@ export interface OutboxEntry {
   organization_id: string;
   device_id: string;
   log_id: string;
+  ingestion_event_id?: string | null;
+  trace_id?: string | null;
+  span_id?: string | null;
+  attempts?: number;
 }
 
 export interface OutboxStore {

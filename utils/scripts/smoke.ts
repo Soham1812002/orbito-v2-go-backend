@@ -1,3 +1,5 @@
+import { logger } from '../../shared/logging/logger.js';
+import { installProcessLogging } from '../../shared/logging/process.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -8,6 +10,8 @@ import { database } from '../../services/backend/src/database/pool.js';
 import { transaction } from '../../services/backend/src/database/transaction.js';
 import { hashPassword } from '../../services/backend/src/modules/auth/passwords.js';
 import { type DecodedEvent } from '../../shared/contracts/events.js';
+
+installProcessLogging();
 
 const env = z
   .object({
@@ -31,7 +35,7 @@ const checks: { check: string; status: 'PASS' }[] = [];
 let socket: Socket | undefined;
 const pass = (check: string) => {
   checks.push({ check, status: 'PASS' });
-  console.log(`PASS ${check}`);
+  logger.info({ event: 'smoke.check' }, `PASS ${check}`);
 };
 
 async function request(path: string, expected: number, options: RequestInit = {}) {
@@ -466,24 +470,9 @@ try {
 
   assert.equal(pending.rows[0].count, 0, 'Outbox did not finish dispatching');
   pass('Committed events delivered through the outbox and Socket.IO');
-  console.log(
-    JSON.stringify(
-      {
-        passed: true,
-        checks: checks.length,
-        demoEmail: env.DEMO_EMAIL,
-        vehicleId: created.vehicleId,
-        deviceId: created.deviceId,
-        imei,
-        savedLogs: 4,
-        savedPositions: 2,
-      },
-      null,
-      2,
-    ),
-  );
-  console.log(
-    'Demo vehicle and messages remain available in the two pages. Password: .env DEMO_PASSWORD.',
+  logger.info(
+    { event: 'smoke.completed', count: checks.length, deviceId: created.deviceId },
+    'All smoke checks passed; demo data remains available; password is in .env DEMO_PASSWORD.',
   );
 } finally {
   socket?.close();

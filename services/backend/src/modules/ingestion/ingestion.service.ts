@@ -1,3 +1,10 @@
+import {
+  childContext,
+  logContext,
+  newTrace,
+  type LogContext,
+} from '../../../../../shared/logging/context.js';
+import { logger } from '../../../../../shared/logging/logger.js';
 import { decodedEvent } from '../../../../../shared/contracts/events.js';
 import { profiles } from '../../../../../shared/contracts/fleet.js';
 import { ApplicationError } from '../../../../../shared/errors/application-error.js';
@@ -16,70 +23,107 @@ export function createIngestionService(deps: IngestionDependencies) {
         throw new ApplicationError('invalid_input', 'Receive timestamp outside admission horizon');
       }
 
-      return deps.inTransaction(async (r) => {
-        // Shared with assignment edits: ingestion may proceed concurrently, reassignment waits.
-        await r.lockAssignments();
-        const d = await r.findDevice(e.deviceIdentifier);
+      e.trace ??= logContext.getStore() ?? newTrace();
+      const requestContext = logContext.getStore();
+      const parent = requestContext?.traceId === e.trace.traceId ? requestContext : e.trace;
+      const context: LogContext = {
+        ...requestContext,
+        ...childContext(parent),
+        ingestionEventId: e.eventId,
+        sessionId: e.source.sessionId,
+      };
 
-        if (!d) {
-          throw new ApplicationError('conflict', 'Device not registered or disabled');
-        }
+      return logContext.run(context, async () => {
+        try {
+          const result = await deps.inTransaction(async (r) => {
+            // Shared with assignment edits: ingestion may proceed concurrently, reassignment waits.
+            await r.lockAssignments();
+            const d = await r.findDevice(e.deviceIdentifier);
 
-        assertDeviceAdmission(e, d, deps.allowUnverified);
-        const isDecoded = e.validation.decodeStatus === 'DECODED';
-        const receipt = await r.addReceipt(e, d, fingerprint(e));
-
-        if (!receipt) {
-          return { eventId: e.eventId, persisted: true, duplicate: true };
-        }
-
-        const trustedTime =
-          e.deviceTimestamp && Date.parse(e.deviceTimestamp) <= Date.parse(e.receivedAt) + 300000;
-        const observed = e.deviceTimestamp ?? e.receivedAt;
-        const vehicleId = await r.findAssignment(
-          d.id,
-          trustedTime
-            ? e.deviceTimestamp
-            : e.eventType === 'LOGIN' || e.eventType === 'HEARTBEAT'
-              ? e.receivedAt
-              : null,
-        );
-        const logId = deps.newId();
-
-        await r.saveLog(e, d, vehicleId, logId);
-        if (isDecoded) {
-          await r.updateActivity(d.id, e.receivedAt);
-          if (trustedTime && e.location) {
-            await r.savePoint(e, d, vehicleId, e.location);
-          }
-
-          const currentVehicleId = await r.currentVehicle(d.id);
-
-          if (currentVehicleId) {
-            await r.updateCommunication(currentVehicleId, d, e.receivedAt);
-            if (
-              !e.historical &&
-              vehicleId === currentVehicleId &&
-              trustedTime &&
-              e.location &&
-              e.status.gpsValid === true
-            ) {
-              await r.updatePosition(currentVehicleId, e.location, e.deviceTimestamp);
+            if (!d) {
+              throw new ApplicationError('conflict', 'Device not registered or disabled');
             }
 
-            if (
-              !e.historical &&
-              ((trustedTime && vehicleId === currentVehicleId) || e.eventType === 'HEARTBEAT') &&
-              e.status.ignition != null
-            ) {
-              await r.updateIgnition(currentVehicleId, e.status.ignition, observed);
+            context.deviceId = d.id;
+            assertDeviceAdmission(e, d, deps.allowUnverified);
+            const isDecoded = e.validation.decodeStatus === 'DECODED';
+            const receipt = await r.addReceipt(e, d, fingerprint(e));
+
+            if (!receipt) {
+              return { eventId: e.eventId, persisted: true, duplicate: true };
             }
-          }
+
+            const trustedTime =
+              e.deviceTimestamp &&
+              Date.parse(e.deviceTimestamp) <= Date.parse(e.receivedAt) + 300000;
+            const observed = e.deviceTimestamp ?? e.receivedAt;
+            const vehicleId = await r.findAssignment(
+              d.id,
+              trustedTime
+                ? e.deviceTimestamp
+                : e.eventType === 'LOGIN' || e.eventType === 'HEARTBEAT'
+                  ? e.receivedAt
+                  : null,
+            );
+            const logId = deps.newId();
+
+            context.logId = logId;
+
+            await r.saveLog(e, d, vehicleId, logId);
+            if (isDecoded) {
+              await r.updateActivity(d.id, e.receivedAt);
+              if (trustedTime && e.location) {
+                await r.savePoint(e, d, vehicleId, e.location);
+              }
+
+              const currentVehicleId = await r.currentVehicle(d.id);
+
+              if (currentVehicleId) {
+                await r.updateCommunication(currentVehicleId, d, e.receivedAt);
+                if (
+                  !e.historical &&
+                  vehicleId === currentVehicleId &&
+                  trustedTime &&
+                  e.location &&
+                  e.status.gpsValid === true
+                ) {
+                  await r.updatePosition(currentVehicleId, e.location, e.deviceTimestamp);
+                }
+
+                if (
+                  !e.historical &&
+                  ((trustedTime && vehicleId === currentVehicleId) ||
+                    e.eventType === 'HEARTBEAT') &&
+                  e.status.ignition != null
+                ) {
+                  await r.updateIgnition(currentVehicleId, e.status.ignition, observed);
+                }
+              }
+            }
+
+            await r.enqueue(d, logId, { ...e, trace: context });
+
+            return { eventId: e.eventId, persisted: true, duplicate: false };
+          });
+
+          logger.info(
+            {
+              event: result.duplicate ? 'ingestion.duplicate' : 'ingestion.committed',
+              outcome: result.duplicate ? 'duplicate' : 'success',
+              protocol: e.protocol,
+              packetType: e.packetType,
+            },
+            'Ingestion transaction completed',
+          );
+
+          return result;
+        } catch (err) {
+          logger.warn(
+            { event: 'ingestion.failed', outcome: 'failure', err },
+            'Ingestion transaction failed',
+          );
+          throw err;
         }
-
-        await r.enqueue(d, logId);
-
-        return { eventId: e.eventId, persisted: true, duplicate: false };
       });
     },
     async registry(imei: string | null) {

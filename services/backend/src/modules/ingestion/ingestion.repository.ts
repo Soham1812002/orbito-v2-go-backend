@@ -278,8 +278,8 @@ export function ingestionRepository(db: SqlExecutor, newId: () => string): Inges
         [currentVehicleId, ignition, observed],
       );
     },
-    async enqueue(d, logId) {
-      await outbox.enqueue(d.organization_id, d.id, logId);
+    async enqueue(d, logId, event) {
+      await outbox.enqueue(d.organization_id, d.id, logId, event);
     },
   };
 }

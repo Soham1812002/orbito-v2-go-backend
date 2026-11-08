@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
+import { childContext, logContext, parseTraceparent } from '../logging/context.js';
 
 export const serviceAuth =
   (secret: string): RequestHandler =>
@@ -13,5 +14,20 @@ export const serviceAuth =
       return;
     }
 
-    next();
+    const parent = parseTraceparent(req.get('traceparent'));
+
+    if (parent) {
+      const current = logContext.getStore();
+      const context = { ...current, ...childContext(parent) };
+
+      res.setHeader('X-Trace-ID', context.traceId);
+      // Mutate only this request's context so the completion callback sees the accepted trace.
+      if (current) {
+        Object.assign(current, context);
+      }
+
+      logContext.run(context, next);
+    } else {
+      next();
+    }
   };

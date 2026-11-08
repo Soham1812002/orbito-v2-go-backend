@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { traceContext } from './tracing.js';
 
 export const activeIdentity = z.object({
   id: z.string().min(1),
@@ -21,6 +22,8 @@ export const authorizationInput = z.object({ sessionHash: z.string().regex(/^[a-
 export const realtimeEvent = z
   .object({
     eventId: z.string().uuid(),
+    ingestionEventId: z.string().uuid().optional(),
+    trace: traceContext.optional(),
     organizationId: z.string().uuid(),
     deviceId: z.string().uuid(),
     logId: z.string().uuid(),

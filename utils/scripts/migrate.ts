@@ -1,3 +1,4 @@
+import { logger } from '../../shared/logging/logger.js';
 import { readdir, readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import 'dotenv/config';
@@ -31,9 +32,13 @@ try {
 
       await c.query(sql);
       await c.query('INSERT INTO schema_migrations(name,checksum) VALUES($1,$2)', [file, hash]);
-      console.log(`Applied ${file}`);
+      logger.info({ event: 'migration.applied', migration: file }, 'Database migration applied');
     }
   });
+  logger.info({ event: 'migration.completed' }, 'Database migrations completed');
+} catch (err) {
+  logger.fatal({ event: 'migration.failed', outcome: 'failure', err }, 'Database migration failed');
+  process.exitCode = 1;
 } finally {
   await pool.end();
 }
