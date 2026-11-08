@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <%- include('partials/head') %>
+  <body>
+    <%- include('partials/header') %>
+    <main>
+      <p class="eyebrow">WORKSPACE / <%= page === 'vehicles' ? 'REGISTRY' : 'DIAGNOSTICS' %></p>
+      <div
+        id="message"
+        role="status"
+        aria-live="polite"
+      ></div>
+      <div class="page-title">
+        <div>
+          <h1>Device messages</h1>
+          <p>A clear view of what your trackers actually send. Times shown in UTC.</p>
+        </div>
+        <div>
+          <span
+            id="connection"
+            class="badge"
+          >
+            Connecting
+          </span>
+          <button
+            id="toggle-live"
+            class="secondary"
+          >
+            Pause live
+          </button>
+        </div>
+      </div>
+      <section class="panel">
+        <form
+          id="filters"
+          class="filter-grid"
+        >
+          <label>
+            Device
+            <select
+              name="deviceId"
+              id="device-filter"
+            >
+              <option value="">All authorized devices</option>
+            </select>
+          </label>
+          <label>
+            Search
+            <input
+              name="q"
+              placeholder="IMEI, vehicle or plate"
+            />
+          </label>
+          <label>
+            Protocol
+            <select name="protocol">
+              <option value="">All protocols</option>
+              <option>CONCOX</option>
+              <option>MARKON_AIS140</option>
+            </select>
+          </label>
+          <label>
+            Decode result
+            <select name="decodeStatus">
+              <option value="">All results</option>
+              <option>DECODED</option>
+              <option>UNSUPPORTED</option>
+              <option>INVALID_CHECKSUM</option>
+              <option>MALFORMED</option>
+            </select>
+          </label>
+          <label>
+            Packet type
+            <input
+              name="packetType"
+              placeholder="NRM / 0x22"
+            />
+          </label>
+          <label>
+            From (UTC)
+            <input
+              type="datetime-local"
+              name="from"
+              required
+            />
+          </label>
+          <label>
+            To (UTC)
+            <input
+              type="datetime-local"
+              name="to"
+              required
+            />
+          </label>
+          <button>Apply filters</button>
+        </form>
+        <div class="toolbar">
+          <h2>Decoded stream</h2>
+          <span id="log-count">Loading…</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Received / device time (UTC)</th>
+                <th>Vehicle / IMEI</th>
+                <th>Packet</th>
+                <th>Decoded data</th>
+                <th>Validation</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="logs"></tbody>
+          </table>
+        </div>
+        <div class="toolbar">
+          <span id="live-note">Live refresh uses saved messages.</span>
+          <div>
+            <button
+              id="newest"
+              class="secondary"
+            >
+              Newest
+            </button>
+            <button
+              id="older"
+              class="secondary"
+              hidden
+            >
+              Older messages
+            </button>
+          </div>
+        </div>
+      </section>
+      <aside class="note">
+        Unknown fields are shown as “Not provided”. Heartbeats do not fabricate a GPS position.
+        Unverified checksums and invalid packets are clearly labeled; the raw payload is restricted
+        to administrators.
+      </aside>
+      <dialog id="log-detail">
+        <div class="toolbar">
+          <h2>Decoded message details</h2>
+          <button
+            id="close-detail"
+            class="secondary"
+          >
+            Close
+          </button>
+        </div>
+        <p>
+          Normalized fields include units and validation evidence. Raw device values remain under
+          protocolData.
+        </p>
+        <pre id="detail-content"></pre>
+      </dialog>
+    </main>
+    <script
+      src="/assets/socket.io/socket.io.min.js"
+      defer
+    ></script>
+    <script
+      type="module"
+      src="/assets/logs.js"
+    ></script>
+  </body>
+</html>

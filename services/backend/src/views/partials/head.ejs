@@ -1,0 +1,25 @@
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+  <meta
+    name="csrf-token"
+    content="<%= csrfToken %>"
+  />
+  <meta
+    name="user-role"
+    content="<%= user.role %>"
+  />
+  <!-- prettier-ignore -->
+  <title><%= page === 'vehicles' ? 'Vehicles' : 'Device logs' %> · Fleet</title>
+  <link
+    rel="stylesheet"
+    href="/assets/style.css"
+  />
+  <script
+    src="/assets/common.js"
+    type="module"
+  ></script>
+</head>

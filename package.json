@@ -2,42 +2,54 @@
   "name": "fleet-tracking",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "apps/backend-api",
-    "apps/realtime-server",
-    "packages/contracts"
-  ],
   "scripts": {
-    "check": "tsc --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
-    "dev:api": "node --import tsx --watch apps/backend-api/src/server.ts",
-    "dev:realtime": "node --import tsx --watch apps/realtime-server/src/server.ts",
-    "db:migrate": "node --import tsx scripts/migrate.ts",
-    "admin:create": "node --import tsx scripts/create-admin.ts",
-    "format": "prettier --write \"apps/**/*.{ts,js,css}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\"",
-    "format:check": "prettier --check \"apps/**/*.{ts,js,css}\" \"packages/**/*.ts\" \"scripts/**/*.ts\" \"tests/**/*.ts\"",
-    "test:local": "node --import tsx --test --experimental-test-isolation=none tests/*.test.ts",
-    "setup:local": "node scripts/setup-local.mjs",
-    "smoke:docker": "docker compose run --rm --build smoke"
+    "check": "tsc --noEmit && tsc -p tsconfig.browser.json --noEmit",
+    "test": "npm run build:browser && node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "dev:api": "npm run build:browser && node --import tsx --watch services/backend/src/server.ts",
+    "dev:realtime": "node --import tsx --watch services/realtime/src/server.ts",
+    "db:migrate": "node --import tsx utils/scripts/migrate.ts",
+    "admin:create": "node --import tsx utils/scripts/create-admin.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:local": "npm run build:browser && node --import tsx --test --experimental-test-isolation=none tests/*.test.ts",
+    "setup:local": "node utils/scripts/setup-local.ts",
+    "smoke:docker": "docker compose run --rm --build smoke",
+    "build": "tsc -p tsconfig.build.json && npm run build:browser",
+    "build:browser": "tsc -p tsconfig.browser.json",
+    "dev:browser": "tsc -p tsconfig.browser.json --watch",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix --max-warnings=0",
+    "fix": "npm run lint:fix && npm run format",
+    "quality": "npm run check && npm run lint && npm run format:check"
   },
   "dependencies": {
-    "express": "5.2.1",
+    "dotenv": "16.6.1",
     "ejs": "3.1.10",
-    "pg": "8.23.0",
-    "zod": "3.25.76",
-    "pino": "9.13.1",
+    "express": "5.2.1",
     "express-rate-limit": "7.5.1",
+    "pg": "8.23.0",
+    "pino": "9.13.1",
     "socket.io": "4.8.3",
     "socket.io-client": "4.7.2",
-    "dotenv": "16.6.1"
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
-    "tsx": "4.23.15",
-    "@types/node": "22.20.1",
-    "@types/express": "5.0.1",
+    "@eslint/js": "10.0.1",
+    "@stylistic/eslint-plugin": "5.10.0",
     "@types/ejs": "3.1.5",
+    "@types/express": "5.0.1",
+    "@types/node": "22.20.1",
     "@types/pg": "8.20.0",
-    "prettier": "3.8.1"
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "jiti": "2.7.0",
+    "prettier": "3.8.1",
+    "prettier-plugin-ejs": "1.0.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

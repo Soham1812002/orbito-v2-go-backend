@@ -323,3 +323,9 @@ Later map/alerts/report pages can use saved points/latest state without changing
 5. Confirm hosting budget, domain, backup destination and acceptable outage/data-loss targets.
 
 Completeness review: one document covers registration fields/validation, temporal mapping, both pages, decoded versus malformed logs, extensible protocol profiles, ports, common contracts, authentication, persisted/live flows, schema/index/retention, reliability, deployment and phased tests. Remaining device/vendor facts are explicit gates, not assumed solved. Only this Markdown plan is created; AI_AGENT_PROMPT.md and both PDFs remain unchanged.
+
+## Current service layout and HTTP deployment (2026-11-08)
+
+The current layout groups applications under `services/backend`, `services/realtime`, `services/gateway` and `services/proxy`, each with its own Dockerfile. Operational scripts and lint tooling are under `utils/scripts` and `utils/eslint`. Shared runtime contracts/helpers remain under `shared`.
+
+The current user-approved deployment supersedes the earlier HTTPS/Compose recommendations in this document: use one root `compose.yaml`, publish HTTP on TCP 80, and publish tracker listeners on TCP 5001 (Markon) and 5002 (Concox). No 443 listener or production override is configured. API 3000, realtime 3001, PostgreSQL 5432 and gateway control 8081 stay private to Docker networks. Many devices share each protocol listener; supported login, location, heartbeat and device-event/alarm packets use that protocol's existing connection and port. Protocol evidence, unsupported variants and acknowledgement/checksum gates remain unchanged.

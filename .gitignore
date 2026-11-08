@@ -1,11 +1,35 @@
+# Dependencies and generated output
 node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local environment and runtime data
 .env
 .env.*
 !.env.example
-coverage/
+data/
 *.db
 *.db-wal
 *.db-shm
 *.test
+*.log
+npm-debug.log*
+
+# Test and browser artifacts
 playwright-report/
 test-results/
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local caches and temporary files
+.cache/
+.tmp/
+tmp/
+
+.eslintcache

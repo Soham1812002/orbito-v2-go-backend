@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DecodedEvent } from '../packages/contracts/src/index.js';
+import { type DecodedEvent } from '../shared/contracts/events.js';
+
 export function event(): DecodedEvent {
   return {
     schemaVersion: 1,

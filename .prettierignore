@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.tmp/
+tmp/
+.cache/
+data/
+coverage/
+playwright-report/
+test-results/
+package-lock.json
+.docs/
+skills/
+# Applied migrations are checksum-protected and must not be reformatted.
+services/backend/migrations/

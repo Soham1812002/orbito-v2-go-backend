@@ -12,9 +12,9 @@ jobs:
           POSTGRES_DB: fleet_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-        ports: ["5432:5432"]
+        ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U postgres -d fleet_test"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d fleet_test"
           --health-interval 5s --health-timeout 3s --health-retries 20
     env:
       DATABASE_TEST_URL: postgres://postgres:postgres@localhost:5432/fleet_test
@@ -24,10 +24,10 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --ignore-scripts
-      - run: npm run check
-      - run: npm run format:check
+      - run: npm run build
+      - run: npm run quality
       - run: npm test
-      - run: node scripts/setup-local.mjs
+      - run: node utils/scripts/setup-local.ts
       - run: docker compose --profile tools config --quiet
         env:
           POSTGRES_PASSWORD: ci-only-password
@@ -37,13 +37,15 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: apps/gps-gateway
+        working-directory: services/gateway
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
           cache: false
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -race ./...
       - run: go test ./internal/protocol -run '^$' -fuzz FuzzFrame -fuzztime 10s
@@ -55,10 +57,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node scripts/setup-local.mjs
+      - run: node utils/scripts/setup-local.ts
       - run: docker compose up --build -d --wait --wait-timeout 180
       - run: docker compose run --rm --build smoke
       - if: failure()
-        run: docker compose logs --tail=100 migrate api realtime gateway nginx
+        run: docker compose logs --tail=100 migrate backend realtime gateway proxy
       - if: always()
         run: docker compose down --remove-orphans

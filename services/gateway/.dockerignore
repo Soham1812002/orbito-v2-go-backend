@@ -1,0 +1,15 @@
+data/
+*.db
+*.db-wal
+*.db-shm
+*.test
+dist/
+coverage/
+*.log
+.vscode/
+.idea/
+.cache/
+.tmp/
+tmp/
+.env
+.env.*

@@ -2,17 +2,17 @@ name: fleet
 x-node: &node
   build:
     context: .
-    dockerfile: Dockerfile.node
+    dockerfile: services/backend/Dockerfile
   restart: unless-stopped
   init: true
   stop_grace_period: 30s
   mem_limit: 512m
   pids_limit: 128
-  logging:
+  logging: &logging
     driver: json-file
-    options: { max-size: "10m", max-file: "3" }
+    options: { max-size: '10m', max-file: '3' }
 services:
-  db:
+  database:
     image: postgis/postgis:16-3.5
     mem_limit: 1g
     environment:
@@ -24,99 +24,111 @@ services:
     restart: unless-stopped
     stop_grace_period: 60s
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U fleet -d fleet"]
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U fleet -d fleet']
       interval: 5s
       timeout: 3s
       retries: 20
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *logging
   migrate:
     <<: *node
-    restart: "no"
-    command: [node, --import, tsx, scripts/migrate.ts]
-    environment: &api-env
-      DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@db:5432/fleet
-      GATEWAY_SECRET: ${GATEWAY_SECRET:?Set GATEWAY_SECRET}
-      REALTIME_SECRET: ${REALTIME_SECRET:?Set REALTIME_SECRET}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
-      REALTIME_URL: http://realtime:3001
-      ALLOW_UNVERIFIED_MARKON: ${ALLOW_UNVERIFIED_MARKON:-false}
-      TRUST_PROXY: "true"
-      NODE_ENV: ${NODE_ENV:-development}
+    restart: 'no'
+    command: [node, utils/scripts/migrate.js]
+    environment:
+      DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
     networks: [data]
     depends_on:
-      db: { condition: service_healthy }
-  api:
+      database: { condition: service_healthy }
+  backend:
     <<: *node
-    environment: *api-env
+    environment:
+      DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
+      GATEWAY_SECRET: ${GATEWAY_SECRET:?Set GATEWAY_SECRET}
+      REALTIME_SECRET: ${REALTIME_SECRET:?Set REALTIME_SECRET}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
+      REALTIME_URL: http://realtime:3001
+      ALLOW_UNVERIFIED_MARKON: ${ALLOW_UNVERIFIED_MARKON:-false}
+      TRUST_PROXY: 'true'
+      NODE_ENV: ${NODE_ENV:-development}
     networks: [web, data, services]
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://localhost:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:3000/health/ready',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 6s
       retries: 3
   realtime:
     <<: *node
-    command: [node, --import, tsx, apps/realtime-server/src/server.ts]
+    build:
+      context: .
+      dockerfile: services/realtime/Dockerfile
     environment:
-      API_URL: http://api:3000
+      API_URL: http://backend:3000
       REALTIME_SECRET: ${REALTIME_SECRET}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
     networks: [web, services]
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://localhost:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:3001/health/ready',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 15s
       timeout: 6s
       retries: 3
   gateway:
-    build: apps/gps-gateway
+    build: services/gateway
     mem_limit: 256m
     pids_limit: 128
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
-      API_URL: http://api:3000
+      API_URL: http://backend:3000
       GATEWAY_SECRET: ${GATEWAY_SECRET}
       ALLOW_UNVERIFIED_MARKON: ${ALLOW_UNVERIFIED_MARKON:-false}
-    ports: ["5001:5001/tcp", "5002:5002/tcp"]
+    ports: ['5001:5001/tcp', '5002:5002/tcp']
     volumes: [spool:/spool]
     networks: [services]
     depends_on:
-      api: { condition: service_healthy }
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      backend: { condition: service_healthy }
+    logging: *logging
   smoke:
     <<: *node
-    restart: "no"
+    restart: 'no'
     profiles: [tools]
-    command: [node, --import, tsx, scripts/smoke.ts]
-    env_file: .env
+    command: [node, utils/scripts/smoke.js]
     environment:
-      <<: *api-env
-      API_URL: http://api:3000
-      WEB_URL: http://nginx
-      SOCKET_URL: http://nginx
-      FLEET_ALLOW_DEMO: "true"
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: postgres://fleet:${POSTGRES_PASSWORD}@database:5432/fleet
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
+      GATEWAY_SECRET: ${GATEWAY_SECRET}
+      DEMO_EMAIL: ${DEMO_EMAIL:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      API_URL: http://backend:3000
+      WEB_URL: http://proxy
+      SOCKET_URL: http://proxy
+      ALLOW_DEMO: 'true'
     networks: [web, data, services]
     depends_on:
-      api: { condition: service_healthy }
+      backend: { condition: service_healthy }
       realtime: { condition: service_healthy }
-      nginx: { condition: service_started }
-  nginx:
-    image: nginx:1.28-alpine
+      proxy: { condition: service_started }
+  proxy:
+    build: services/proxy
     mem_limit: 128m
-    ports: ["${HTTP_PORT:-8080}:80"]
-    environment:
-      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
-      NGINX_ENVSUBST_FILTER: ^FLEET_DOMAIN$
-    volumes: [./infra/nginx/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro]
+    ports: ['80:80']
     networks: [web]
     restart: unless-stopped
-    depends_on: [api, realtime]
+    logging: *logging
+    depends_on: [backend, realtime]
 networks:
   web:
   services:
