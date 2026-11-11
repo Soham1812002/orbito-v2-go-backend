@@ -269,6 +269,7 @@ try {
   const start = Date.now();
   const event: DecodedEvent = {
     schemaVersion: 1,
+    parserVersion: 'test-1',
     eventId: randomUUID(),
     deviceIdentifier: imei,
     protocol: 'CONCOX',

@@ -4,13 +4,14 @@ import { traceContext } from './tracing.js';
 export const decodedEvent = z
   .object({
     schemaVersion: z.literal(1),
+    parserVersion: z.string().min(1).max(40).default('1'),
     eventId: z.string().uuid(),
     trace: traceContext.optional(),
     deviceIdentifier: z.string().regex(/^\d{15}$/),
     protocol: z.enum(['MARKON_AIS140', 'CONCOX']),
     profile: z.string().min(1).max(80),
     packetType: z.string().max(40),
-    eventType: z.enum(['LOGIN', 'HEARTBEAT', 'LOCATION', 'DEVICE_EVENT', 'DIAGNOSTIC']),
+    eventType: z.enum(['LOGIN', 'HEARTBEAT', 'STATUS', 'LOCATION', 'DEVICE_EVENT', 'DIAGNOSTIC']),
     deviceTimestamp: z.string().datetime().nullable(),
     receivedAt: z.string().datetime(),
     historical: z.boolean(),
@@ -29,6 +30,7 @@ export const decodedEvent = z
         batteryLevel: z.number().int().min(0).max(6).nullable().optional(),
         batteryPercent: z.number().min(0).max(100).nullable().optional(),
         batteryVoltage: z.number().min(0).max(100).nullable().optional(),
+        externalPowerVoltage: z.number().min(0).max(655.35).nullable().optional(),
         gsmLevel: z.number().int().min(0).max(31).nullable().optional(),
         externalPowerConnected: z.boolean().nullable().optional(),
       })

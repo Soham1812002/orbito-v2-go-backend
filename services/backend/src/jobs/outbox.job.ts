@@ -25,6 +25,15 @@ export function createOutboxJob(deps: {
         },
         async () => {
           try {
+            if (!(await deps.store.renew(row.id, row.lease_token))) {
+              logger.warn(
+                { event: 'outbox.lease.expired', outcome: 'skipped' },
+                'Expired or superseded claim was not delivered',
+              );
+
+              return;
+            }
+
             logger.debug(
               { event: 'outbox.delivery.started', attempt: (row.attempts ?? 0) + 1 },
               'Delivering persisted notification',
@@ -37,7 +46,7 @@ export function createOutboxJob(deps: {
               deviceId: row.device_id,
               logId: row.log_id,
             });
-            await deps.store.delivered(row.id);
+            await deps.store.delivered(row.id, row.lease_token);
             logger.info({ event: 'outbox.delivered' }, 'Realtime accepted notification');
           } catch (err) {
             logger.warn(
@@ -45,7 +54,7 @@ export function createOutboxJob(deps: {
               'Realtime delivery will retry',
             );
             deps.warn(err, row.id);
-            await deps.store.retry(row.id);
+            await deps.store.retry(row.id, row.lease_token);
           }
         },
       );

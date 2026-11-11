@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM golang:1.27-alpine AS log-build
+ENV GOMAXPROCS=2
 WORKDIR /log-src
 COPY utils/logging/ ./
 RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go test ./... && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /logrunner .

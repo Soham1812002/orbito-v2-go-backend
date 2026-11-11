@@ -34,6 +34,7 @@ type Trace struct {
 
 type Event struct {
 	Trace         *Trace         `json:"trace,omitempty"`
+	ParserVersion string         `json:"parserVersion"`
 	SchemaVersion int            `json:"schemaVersion"`
 	EventID       string         `json:"eventId"`
 	Identifier    string         `json:"deviceIdentifier"`
@@ -62,7 +63,7 @@ func UUID() string {
 }
 func Base(raw []byte, profile, session string, now time.Time) Event {
 	sum := sha256.Sum256(raw)
-	return Event{SchemaVersion: 1, EventID: UUID(), Profile: profile, EventType: "DIAGNOSTIC", ReceivedAt: now.UTC().Format(time.RFC3339Nano), Status: map[string]any{}, Data: map[string]any{}, Validation: Validation{DecodeStatus: "DECODED", Checksum: "NOT_PRESENT", Warnings: []string{}}, Source: Source{RawHash: hex.EncodeToString(sum[:]), SessionID: session, Raw: hex.EncodeToString(raw)}}
+	return Event{ParserVersion: "2", SchemaVersion: 1, EventID: UUID(), Profile: profile, EventType: "DIAGNOSTIC", ReceivedAt: now.UTC().Format(time.RFC3339Nano), Status: map[string]any{}, Data: map[string]any{}, Validation: Validation{DecodeStatus: "DECODED", Checksum: "NOT_PRESENT", Warnings: []string{}}, Source: Source{RawHash: hex.EncodeToString(sum[:]), SessionID: session, Raw: hex.EncodeToString(raw)}}
 }
 func Diagnostic(e Event, status, warning string) Event {
 	e.EventType = "DIAGNOSTIC"
@@ -98,6 +99,9 @@ func Frame(buf []byte, family string) ([]byte, int, error) {
 		}
 		for i, b := range buf {
 			if b == '*' {
+				if i+1 > 8192 {
+					return nil, i + 1, errors.New("oversized ASCII frame")
+				}
 				return append([]byte(nil), buf[:i+1]...), i + 1, nil
 			}
 		}

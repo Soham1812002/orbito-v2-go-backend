@@ -7,6 +7,7 @@ x-node: &node
   init: true
   stop_grace_period: 30s
   mem_limit: 512m
+  cpus: 0.75
   pids_limit: 128
   logging: &logging
     driver: json-file
@@ -33,6 +34,7 @@ services:
       context: .
       dockerfile: services/database/Dockerfile
     mem_limit: 1g
+    cpus: 0.75
     environment:
       SERVICE_NAME: database
       NODE_ENV: ${NODE_ENV:-development}
@@ -103,6 +105,7 @@ services:
       retries: 3
   realtime:
     <<: *node
+    cpus: 0.25
     volumes: ['${LOG_HOST_DIR:-./logs}/realtime:/logs']
     build:
       context: .
@@ -136,11 +139,19 @@ services:
       context: .
       dockerfile: services/gateway/Dockerfile
     mem_limit: 256m
+    cpus: 0.5
     pids_limit: 128
     restart: unless-stopped
     stop_grace_period: 30s
     environment:
       SERVICE_NAME: gateway
+      SPOOL_MAX_BYTES: ${SPOOL_MAX_BYTES:-1073741824}
+      FORWARD_WORKERS: ${FORWARD_WORKERS:-4}
+      MAX_CONNECTIONS: ${MAX_CONNECTIONS:-256}
+      LOGIN_TIMEOUT: ${LOGIN_TIMEOUT:-15s}
+      IDLE_TIMEOUT: ${IDLE_TIMEOUT:-180s}
+      FRAME_TIMEOUT: ${FRAME_TIMEOUT:-15s}
+      REGISTRY_TIMEOUT: ${REGISTRY_TIMEOUT:-3s}
       NODE_ENV: ${NODE_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-trace}
       LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
@@ -194,6 +205,7 @@ services:
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
     volumes: ['${LOG_HOST_DIR:-./logs}/proxy:/logs']
     mem_limit: 128m
+    cpus: 0.25
     ports: ['80:80']
     networks: [web]
     restart: unless-stopped

@@ -50,8 +50,12 @@ export async function startLogPage() {
     return query;
   }
 
-  async function load() {
+  async function load(invalidate = false) {
     if (loading) {
+      if (invalidate) {
+        requestGeneration++;
+      }
+
       pending = true;
 
       return;
@@ -82,10 +86,10 @@ export async function startLogPage() {
     }
   }
 
-  function newest() {
+  function newest(invalidate = false) {
     cursor = null;
     query<HTMLInputElement>('[name="to"]', form).value = dateInput(new Date(Date.now() + 60000));
-    void load();
+    void load(invalidate);
   }
 
   form.addEventListener('submit', (e) => {
@@ -93,20 +97,20 @@ export async function startLogPage() {
     live = false;
     updateLive();
     cursor = null;
-    void load();
+    void load(true);
   });
 
   query('#older').addEventListener('click', () => {
     live = false;
     cursor = nextCursor;
     updateLive();
-    void load();
+    void load(true);
   });
 
   query('#newest').addEventListener('click', () => {
     live = true;
     updateLive();
-    newest();
+    newest(true);
   });
 
   query('#toggle-live').addEventListener('click', () => {
@@ -172,7 +176,13 @@ export async function startLogPage() {
         ? 'Connection unavailable'
         : 'Disconnected · retrying';
     },
-    log: scheduleRefresh,
+    log: (event) => {
+      const selected = query<HTMLSelectElement>('[name="deviceId"]', form).value;
+
+      if (!selected || selected === event?.deviceId) {
+        scheduleRefresh();
+      }
+    },
     error: (error) => message(errorText(error)),
   });
 

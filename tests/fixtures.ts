@@ -4,6 +4,7 @@ import { type DecodedEvent } from '../shared/contracts/events.js';
 export function event(): DecodedEvent {
   return {
     schemaVersion: 1,
+    parserVersion: 'test-1',
     eventId: randomUUID(),
     deviceIdentifier: '358980100675496',
     protocol: 'CONCOX',

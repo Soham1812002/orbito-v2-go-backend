@@ -115,6 +115,7 @@ test('outbox retries restore the original trace and packet ID with distinct deli
   let retries = 0;
   const row = {
     id: 'delivery',
+    lease_token: 'lease',
     organization_id: 'org',
     device_id: 'device',
     log_id: 'log',
@@ -125,6 +126,7 @@ test('outbox retries restore the original trace and packet ID with distinct deli
   const options = {
     store: {
       claim: async () => [row],
+      renew: async () => true,
       delivered: async () => {},
       retry: async () => {
         retries++;

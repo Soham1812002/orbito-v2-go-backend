@@ -53,7 +53,8 @@ export function outboxRepository(db: SqlExecutor) {
         )
       UPDATE realtime_outbox o
       SET
-        lease_until = now() + interval '60 seconds'
+        lease_until = now() + interval '60 seconds',
+        lease_token = gen_random_uuid()
       FROM
         claim
       WHERE
@@ -63,7 +64,15 @@ export function outboxRepository(db: SqlExecutor) {
     `)
       ).rows;
     },
-    async delivered(id: string) {
+    async renew(id: string, token: string) {
+      const result = await db.query(
+        "UPDATE realtime_outbox SET lease_until=now()+interval '60 seconds' WHERE id=$1 AND lease_token=$2 AND lease_until>now() AND dispatched_at IS NULL RETURNING id",
+        [id, token],
+      );
+
+      return result.rowCount === 1;
+    },
+    async delivered(id: string, token: string) {
       await db.query(
         `
       UPDATE realtime_outbox
@@ -71,12 +80,12 @@ export function outboxRepository(db: SqlExecutor) {
         dispatched_at = now(),
         lease_until = NULL
       WHERE
-        id = $1
+        id = $1 AND lease_token = $2
     `,
-        [id],
+        [id, token],
       );
     },
-    async retry(id: string) {
+    async retry(id: string, token: string) {
       await db.query(
         `
       UPDATE realtime_outbox
@@ -85,9 +94,9 @@ export function outboxRepository(db: SqlExecutor) {
         lease_until = NULL,
         next_attempt_at = now() + LEAST(30, power(2, LEAST(attempts, 5))) * interval '1 second'
       WHERE
-        id = $1
+        id = $1 AND lease_token = $2
     `,
-        [id],
+        [id, token],
       );
     },
   };

@@ -35,6 +35,12 @@ test(
           'utf8',
         ),
       );
+      await pool.query(
+        await readFile(
+          new URL('../services/backend/migrations/003_outbox_lease_token.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const org = randomUUID();
       const device = randomUUID();
       const ids = [randomUUID(), randomUUID()];
@@ -57,7 +63,9 @@ test(
       const first = ids[0]!;
 
       assert.equal((await transaction(pool, (c) => outboxRepository(c).claim())).length, 0);
-      await store.retry(first);
+      const firstToken = claims.flat().find((row) => row.id === first)!.lease_token;
+
+      await store.retry(first, firstToken);
       const retry = (
         await pool.query(
           'SELECT attempts,lease_until,next_attempt_at>now() AS delayed FROM realtime_outbox WHERE id=$1',
@@ -78,13 +86,14 @@ test(
         store: {
           claim: () => transaction(pool, (c) => outboxRepository(c).claim()),
           retry: store.retry,
-          delivered: async (id) => {
+          renew: store.renew,
+          delivered: async (id, token) => {
             if (loseCompletion) {
               loseCompletion = false;
               throw new Error('Lost completion');
             }
 
-            await store.delivered(id);
+            await store.delivered(id, token);
           },
         },
         send: async () => {
@@ -111,6 +120,29 @@ test(
           .dispatched_at,
       );
 
+      // An expired batch entry cannot be renewed/completed by its previous owner.
+      const second = ids[1]!;
+      const previousToken = claims.flat().find((row) => row.id === second)!.lease_token;
+
+      await pool.query(
+        "UPDATE realtime_outbox SET lease_until=now()-interval '1 second' WHERE id=$1",
+        [second],
+      );
+      assert.equal(await store.renew(second, previousToken), false);
+      const replacement = (await transaction(pool, (c) => outboxRepository(c).claim())).find(
+        (row) => row.id === second,
+      )!;
+
+      assert.notEqual(replacement.lease_token, previousToken);
+      await store.delivered(second, previousToken);
+      await store.retry(second, previousToken);
+      assert.equal(
+        (await pool.query('SELECT dispatched_at FROM realtime_outbox WHERE id=$1', [second]))
+          .rows[0].dispatched_at,
+        null,
+      );
+      assert.equal(await store.renew(second, replacement.lease_token), true);
+      await store.delivered(second, replacement.lease_token);
       await pool.query("INSERT INTO organizations(id,name) VALUES($1,'QA')", [org]);
       await pool.query(
         "INSERT INTO devices(id,organization_id,imei,manufacturer,model,protocol,profile_id,expected_interval) VALUES($1,$2,'123456789012345','Concox','QA','CONCOX','concox-v29-standard',60)",

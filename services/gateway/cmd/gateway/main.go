@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fleet/gateway/internal/observability"
-	"fleet/gateway/internal/protocol"
 	"fleet/gateway/internal/spool"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -32,13 +30,16 @@ type device struct {
 	Enabled bool   `json:"enabled"`
 }
 type gateway struct {
-	queue       *spool.Queue
-	api, secret string
-	client      *http.Client
-	allowMarkon bool
-	mu          sync.Mutex
-	sessions    map[string]net.Conn
-	wg          sync.WaitGroup
+	queue            *spool.Queue
+	api, secret      string
+	client           *http.Client
+	allowMarkon      bool
+	limits           sessionLimits
+	capacityRejected atomic.Uint64
+	admittedTotal    atomic.Uint64
+	mu               sync.Mutex
+	sessions         map[string]net.Conn
+	wg               sync.WaitGroup
 }
 
 func env(name, fallback string) string {
@@ -48,7 +49,7 @@ func env(name, fallback string) string {
 	return fallback
 }
 func (g *gateway) lookup(ctx context.Context, imei string, trace *observability.Trace) (device, error) {
-	lookupCtx, cancel := context.WithTimeout(ctx, time.Second)
+	lookupCtx, cancel := context.WithTimeout(ctx, g.limits.withDefaults().registryTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(lookupCtx, "GET", g.api+"/internal/v1/device-registry?imei="+url.QueryEscape(imei), nil)
 	if err != nil {
@@ -70,282 +71,18 @@ func (g *gateway) lookup(ctx context.Context, imei string, trace *observability.
 	if err = json.NewDecoder(io.LimitReader(res.Body, 65536)).Decode(&result); err != nil {
 		return device{}, err
 	}
-	if len(result.Items) != 1 || !result.Items[0].Enabled {
+	if len(result.Items) != 1 || !result.Items[0].Enabled || result.Items[0].IMEI != imei {
 		return device{}, errUnregistered
 	}
 	return result.Items[0], nil
 }
-func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
-	defer g.wg.Done()
-	defer conn.Close()
-	session := protocol.UUID()
-	sessionLog := slog.With("sessionId", session, "protocol", family)
-	sessionLog.Info("Tracker session opened", "event", "session.opened")
-	defer sessionLog.Info("Tracker session closed", "event", "session.closed")
-	identifier, profile := "", ""
-	registered := device{}
-	lastLookup := time.Time{}
-	lastConfirmed := time.Time{}
-	pending := []byte{}
-	scratch := make([]byte, 4096)
-	bad := 0
-	incompleteSince := time.Time{}
-	defer func() {
-		if identifier != "" {
-			g.mu.Lock()
-			if g.sessions[identifier] == conn {
-				delete(g.sessions, identifier)
-			}
-			g.mu.Unlock()
-		}
-	}()
-	for {
-		timeout := 180 * time.Second
-		if identifier == "" {
-			timeout = 15 * time.Second
-		}
-		if !incompleteSince.IsZero() {
-			timeout = 15*time.Second - time.Since(incompleteSince)
-			if timeout <= 0 {
-				return
-			}
-		}
-		if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return
-		}
-		n, err := conn.Read(scratch)
-		if err != nil {
-			return
-		}
-		pending = append(pending, scratch[:n]...)
-		if len(pending) > 16384 {
-			return
-		}
-		for len(pending) > 0 {
-			frame, consumed, err := protocol.Frame(pending, family)
-			if errors.Is(err, protocol.ErrIncomplete) {
-				if incompleteSince.IsZero() {
-					incompleteSince = time.Now()
-				}
-				break
-			}
-			if consumed > 0 {
-				pending = pending[consumed:]
-			}
-			if err != nil {
-				bad++
-				sessionLog.Warn("Frame rejected", "event", "frame.rejected", "outcome", "rejected")
-				if bad > 10 {
-					return
-				}
-				continue
-			}
-			incompleteSince = time.Time{}
-			now := time.Now()
-			trace := observability.NewTrace()
-			packetLog := sessionLog.With("traceId", trace.TraceID, "spanId", trace.SpanID)
-			var event protocol.Event
-			var ack []byte
-			if family == "MARKON_AIS140" {
-				event, ack, err = protocol.Markon(frame, "markon-v1-diagnostic", session, now)
-			} else {
-				parseProfile := profile
-				if parseProfile == "" {
-					parseProfile = "concox-v29-standard"
-				}
-				event, ack, err = protocol.Concox(frame, parseProfile, identifier, session, now)
-			}
-			if err != nil {
-				bad++
-				packetLog.Warn("packet rejected", "event", "packet.rejected", "outcome", "rejected", "family", family, "reason", err.Error())
-				if bad > 10 {
-					return
-				}
-				continue
-			}
-			event.Trace = &protocol.Trace{TraceID: trace.TraceID, SpanID: trace.SpanID}
-			packetLog = packetLog.With("ingestionEventId", event.EventID, "packetType", event.PacketType)
-			packetLog.Debug("Packet decoded", "event", "packet.decoded")
-			if identifier == "" {
-				if event.EventType != "LOGIN" || !protocol.ValidIMEI(event.Identifier) {
-					return
-				}
-				registered, err = g.lookup(ctx, event.Identifier, trace)
-				if err != nil {
-					packetLog.Warn("device login rejected", "event", "session.login.rejected", "outcome", "rejected", "reason", err.Error())
-					return
-				}
-				profile = registered.Profile
-				if family == "MARKON_AIS140" && (profile != "markon-v1-diagnostic" || !g.allowMarkon) {
-					return
-				}
-				if family == "CONCOX" && profile != "concox-v29-standard" && profile != "concox-v29-eg02" {
-					return
-				}
-				event.Profile = profile
-				g.mu.Lock()
-				_, exists := g.sessions[event.Identifier]
-				if !exists {
-					g.sessions[event.Identifier] = conn
-					identifier = event.Identifier
-				}
-				g.mu.Unlock()
-				if exists {
-					packetLog.Warn("duplicate live session rejected", "event", "session.duplicate", "outcome", "rejected")
-					return
-				}
-				lastLookup = now
-				lastConfirmed = now
-			} else {
-				if event.Identifier != "" && event.Identifier != identifier {
-					return
-				}
-				event.Identifier = identifier
-				event.Profile = profile
-				if now.Sub(lastLookup) > 30*time.Second {
-					updated, lookupErr := g.lookup(ctx, identifier, trace)
-					lastLookup = now
-					if lookupErr != nil {
-						if errors.Is(lookupErr, errUnregistered) {
-							return
-						}
-						if now.Sub(lastConfirmed) > 15*time.Minute {
-							return
-						}
-						packetLog.Warn("registry unavailable; temporarily using session registration", "event", "registry.unavailable", "outcome", "retry")
-					} else {
-						if !updated.Enabled || updated.Profile != registered.Profile {
-							return
-						}
-						lastConfirmed = now
-					}
-				}
-			}
-			if !protocol.ValidIMEI(event.Identifier) {
-				return
-			}
-			if event.Validation.DecodeStatus != "DECODED" {
-				bad++
-				if bad > 10 {
-					return
-				}
-			}
-			if err = g.queue.Put(event.EventID, event); err != nil {
-				packetLog.Error("durable admission failed", "event", "packet.admission.failed", "outcome", "failure", "error", err)
-				return
-			}
-			packetLog.Info("Packet durably admitted", "event", "packet.admitted")
-			if len(ack) > 0 {
-				if err = conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-					return
-				}
-				if _, err = io.Copy(conn, bytes.NewReader(ack)); err != nil {
-					packetLog.Warn("ACK write failed", "event", "packet.ack.failed", "outcome", "failure")
-					return
-				}
-				packetLog.Debug("ACK written to connection", "event", "packet.ack.written")
-			}
-			// A session may upload stored history quickly; bound work without one goroutine per packet.
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(20 * time.Millisecond):
-			}
-		}
-	}
-}
-func (g *gateway) forward(ctx context.Context) {
-	backoff := time.Second
-	for ctx.Err() == nil {
-		name, data, err := g.queue.Next()
-		if err != nil {
-			slog.Error("spool read failed", "error", err)
-		}
-		if err != nil || name == "" {
-			if !wait(ctx, time.Second) {
-				return
-			}
-			continue
-		}
-		var original struct {
-			EventID string               `json:"eventId"`
-			Trace   *observability.Trace `json:"trace"`
-		}
-		if err = json.Unmarshal(data, &original); err != nil {
-			slog.Error("Invalid spool record", "event", "spool.invalid", "outcome", "failure")
-			if err = g.queue.Quarantine(name); err != nil {
-				slog.Error("Quarantine failed", "error", err)
-			}
-			continue
-		}
-		if original.Trace == nil {
-			original.Trace = observability.LegacyTrace(original.EventID)
-		}
-		attemptTrace := original.Trace.Child()
-		forwardLog := slog.With("traceId", attemptTrace.TraceID, "spanId", attemptTrace.SpanID, "ingestionEventId", original.EventID)
-		forwardLog.Debug("Forwarding packet", "event", "packet.forward.started")
-		req, err := http.NewRequestWithContext(ctx, "POST", g.api+"/internal/v1/events", bytes.NewReader(data))
-		if err != nil {
-			return
-		}
-		req.Header.Set("traceparent", attemptTrace.Header())
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+g.secret)
-		res, err := g.client.Do(req)
-		success := false
-		permanent := false
-		if err == nil {
-			var result struct {
-				EventID   string `json:"eventId"`
-				Persisted bool   `json:"persisted"`
-			}
-			if res.StatusCode == 200 {
-				decodeErr := json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&result)
-				success = decodeErr == nil && result.Persisted && result.EventID == original.EventID
-			}
-			permanent = res.StatusCode == 400 || res.StatusCode == 422 || res.StatusCode == 409
-			res.Body.Close()
-		}
-		if success {
-			if err = g.queue.Done(name); err != nil {
-				slog.Error("spool completion failed", "error", err)
-				if !wait(ctx, time.Second) {
-					return
-				}
-			}
-			forwardLog.Info("Backend committed packet", "event", "packet.forward.committed")
-			backoff = time.Second
-			continue
-		}
-		if permanent {
-			forwardLog.Error("event quarantined; operator action required", "event", "packet.quarantined", "outcome", "failure", "file", name)
-			if err = g.queue.Quarantine(name); err != nil {
-				slog.Error("quarantine failed", "error", err)
-				if !wait(ctx, time.Second) {
-					return
-				}
-			}
-			continue
-		}
-		forwardLog.Warn("event forwarding retry", "event", "packet.forward.retry", "outcome", "retry", "error", err)
-		if !wait(ctx, backoff+time.Duration(rand.IntN(500))*time.Millisecond) {
-			return
-		}
-		backoff *= 2
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-	}
-}
-func wait(ctx context.Context, d time.Duration) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(d):
-		return true
-	}
-}
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		if checkHealth() != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	observability.Configure()
 	slog.Info("Gateway starting", "event", "service.starting")
 	secret := os.Getenv("GATEWAY_SECRET")
@@ -366,9 +103,16 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	g := &gateway{queue: queue, api: api, secret: secret, client: &http.Client{Timeout: 5 * time.Second}, allowMarkon: os.Getenv("ALLOW_UNVERIFIED_MARKON") == "true", sessions: map[string]net.Conn{}}
-	g.wg.Add(1)
-	go func() { defer g.wg.Done(); g.forward(ctx) }()
+	defer queue.Close()
+	limits, err := readSessionLimits()
+	if err != nil {
+		observability.Fatal("service.config.invalid", "Invalid gateway connection limits")
+	}
+	g := &gateway{limits: limits, queue: queue, api: api, secret: secret, client: &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{MaxIdleConns: 32, MaxIdleConnsPerHost: 32, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}}, allowMarkon: os.Getenv("ALLOW_UNVERIFIED_MARKON") == "true", sessions: map[string]net.Conn{}}
+	for worker := 0; worker < limits.forwardWorkers; worker++ {
+		g.wg.Add(1)
+		go func() { defer g.wg.Done(); g.forward(ctx) }()
+	}
 	health := &http.Server{Addr: env("CONTROL_ADDR", ":8081"), ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health/live" && r.URL.Path != "/health/ready" {
 			http.NotFound(w, r)
@@ -381,7 +125,7 @@ func main() {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "spool": queue.Stats(), "admittedFrames": g.admittedTotal.Load(), "capacityRejected": g.capacityRejected.Load()})
 	})}
 	go func() {
 		if err := health.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -390,7 +134,7 @@ func main() {
 		}
 	}()
 	listeners := []net.Listener{}
-	slots := make(chan struct{}, 256)
+	slots := make(chan struct{}, limits.maxConnections)
 	for _, spec := range []struct{ addr, family string }{{env("MARKON_ADDR", ":5001"), "MARKON_AIS140"}, {env("CONCOX_ADDR", ":5002"), "CONCOX"}} {
 		listener, err := net.Listen("tcp", spec.addr)
 		if err != nil {
@@ -403,6 +147,10 @@ func main() {
 			for {
 				conn, err := l.Accept()
 				if err != nil {
+					if ctx.Err() == nil {
+						slog.Error("Tracker listener failed", "event", "listener.failed", "error", err)
+						cancel()
+					}
 					return
 				}
 				select {
@@ -410,6 +158,8 @@ func main() {
 					g.wg.Add(1)
 					go func() { defer func() { <-slots }(); g.session(ctx, conn, family) }()
 				default:
+					g.capacityRejected.Add(1)
+					slog.Warn("Connection capacity reached", "event", "session.capacity.rejected", "outcome", "rejected")
 					conn.Close()
 				}
 			}

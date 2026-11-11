@@ -55,6 +55,7 @@ jobs:
           go vet ./...
           go test -race ./...
       - run: go test ./internal/protocol -run '^$' -fuzz FuzzFrame -fuzztime 10s
+      - run: go test ./internal/protocol -run '^$' -fuzz FuzzConcoxDecode -fuzztime 10s
   docker-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -66,6 +67,10 @@ jobs:
       - run: node utils/scripts/setup-local.ts
       - run: docker compose up --build -d --wait --wait-timeout 180
       - run: docker compose run --rm --build smoke
+      - name: Verify TCP packet flow and crash recovery
+        run: |
+          npm ci --ignore-scripts
+          LOAD_DEVICES=2 LOAD_ROUNDS=1 npm run stress:gateway
       - if: failure()
         run: docker compose logs --tail=100 migrate backend realtime gateway proxy
       - if: always()

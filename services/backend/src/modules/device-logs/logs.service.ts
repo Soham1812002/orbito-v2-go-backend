@@ -25,12 +25,15 @@ export function createLogService(read: LogReader, now: () => number) {
       const last = items.at(-1);
 
       return {
-        items: items.map((row) => ({
+        items: items.map(({ received_at_exact, ...row }) => ({
           ...row,
-          received_at: row.received_at.toISOString(),
+          received_at: received_at_exact ?? row.received_at.toISOString(),
           device_time: row.device_time?.toISOString() ?? null,
         })),
-        nextCursor: rows.length > q.limit && last ? encodeCursor(last.received_at, last.id) : null,
+        nextCursor:
+          rows.length > q.limit && last
+            ? encodeCursor(last.received_at_exact ?? last.received_at, last.id)
+            : null,
         from,
         to,
       };

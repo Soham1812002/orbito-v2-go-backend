@@ -43,11 +43,26 @@ export interface DeviceLog {
   historical: boolean;
   decode_status: string;
   checksum_status: string;
-  location: { latitude: number; longitude: number; speedKph: number | null } | null;
+  location: {
+    latitude: number;
+    longitude: number;
+    speedKph: number | null;
+    headingDegrees?: number | null;
+  } | null;
   status: {
     ignition?: boolean | null;
+    gpsValid?: boolean | null;
     batteryLevel?: number | null;
     batteryPercent?: number | null;
     gsmLevel?: number | null;
+    externalPowerVoltage?: number | null;
+    batteryVoltage?: number | null;
+  } | null;
+  protocol_data?: {
+    trackingEnabled?: boolean | null;
+    charging?: boolean | null;
+    defenseActivated?: boolean | null;
+    oilElectricityCutOff?: boolean | null;
+    mileageRaw?: number | null;
   } | null;
 }

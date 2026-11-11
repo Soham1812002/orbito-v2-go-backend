@@ -35,3 +35,11 @@ It is therefore too broad to say that every packet or function from either physi
 Obtain the actual units' model/firmware and server configuration, including any separate government/emergency, backup or auxiliary endpoint if the firmware offers one. Capture a login, ordinary location, heartbeat and each required alarm, identifying the destination IP/port and connection. The existence of a government destination in the document does not itself prove that a particular unit opens a second connection, uses a different numeric port, or sends that packet to our endpoint.
 
 For our ordinary supported tracking channel, keep Markon 5001 and Concox 5002. There is no evidence in these PDFs requiring a separate ordinary alarm listener. Do not extend that conclusion to every emergency, SMS or auxiliary function.
+
+## Decoder follow-up (2026-11-11)
+
+Subtype `0x94/00` is now supported for the exact documented one-byte subtype plus two-byte voltage payload (PDF p.26). It produces a status event with external power voltage divided by100 and no fabricated position/device time. Section10.2 on p.31 explicitly requires no server response. Unknown subtypes/layouts stay diagnostic; there is no speculative acknowledgement.
+
+Heartbeat bit6 is preserved as a reported tracking flag, not proof that a persistent configuration setting must be enabled. Other documented heartbeat flags and the two raw language/extended-status bytes are retained. EG02/EG03 external voltage is labeled as external power voltage. Mileage remains a raw optional counter because its unit is not established here.
+
+The session malformed-input limit now counts consecutive malformed/CRC-invalid inputs rather than valid unsupported messages. Capture evidence showed peer-originated resets after the first information packet; this correction is not claimed to explain those specific resets. Packet diagnostics and session close reasons expose the distinction without recording raw payloads or SIM identifiers.

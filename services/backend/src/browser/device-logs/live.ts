@@ -9,7 +9,7 @@ declare global {
 export interface LiveCallbacks {
   connected: () => void;
   disconnected: (unavailable: boolean) => void;
-  log: () => void;
+  log: (event: { deviceId: string }) => void;
   error: (error: unknown) => void;
 }
 

@@ -134,7 +134,7 @@ export function ingestionRepository(db: SqlExecutor, newId: () => string): Inges
           e.validation.checksum,
           JSON.stringify(safeEvent),
           e.source.raw ?? null,
-          '1',
+          e.parserVersion,
           e.historical,
         ],
       );

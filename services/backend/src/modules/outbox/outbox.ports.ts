@@ -1,5 +1,6 @@
 export interface OutboxEntry {
   id: string;
+  lease_token: string;
   organization_id: string;
   device_id: string;
   log_id: string;
@@ -11,6 +12,7 @@ export interface OutboxEntry {
 
 export interface OutboxStore {
   claim(): Promise<OutboxEntry[]>;
-  delivered(id: string): Promise<void>;
-  retry(id: string): Promise<void>;
+  renew(id: string, token: string): Promise<boolean>;
+  delivered(id: string, token: string): Promise<void>;
+  retry(id: string, token: string): Promise<void>;
 }

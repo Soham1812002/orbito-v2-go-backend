@@ -21,6 +21,8 @@ const safeFields = new Set([
   'protocol',
   'profile',
   'packetType',
+  'decodeStatus',
+  'checksumStatus',
   'recipients',
   'port',
   'migration',

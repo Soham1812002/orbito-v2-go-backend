@@ -120,8 +120,20 @@ test('unknown-account login still pays the password-verification cost', async ()
 
 test('outbox retries delivery/completion failures and continues other claimed events', async () => {
   const events = [
-    { id: 'first', organization_id: 'org', device_id: 'device', log_id: 'log' },
-    { id: 'second', organization_id: 'org', device_id: 'device', log_id: 'log' },
+    {
+      id: 'first',
+      lease_token: 'first-lease',
+      organization_id: 'org',
+      device_id: 'device',
+      log_id: 'log',
+    },
+    {
+      id: 'second',
+      lease_token: 'second-lease',
+      organization_id: 'org',
+      device_id: 'device',
+      log_id: 'log',
+    },
   ];
   const completed: string[] = [];
   const retried: string[] = [];
@@ -129,6 +141,7 @@ test('outbox retries delivery/completion failures and continues other claimed ev
   const dispatch = createOutboxJob({
     store: {
       claim: async () => events,
+      renew: async () => true,
       delivered: async (id) => {
         completed.push(id);
       },
@@ -212,4 +225,90 @@ test('fanout revalidates each connection and disconnects unauthorized or unavail
   await fanout({ eventId: 'event', organizationId: 'org', deviceId: 'device', logId: 'log' });
   assert.deepEqual(notified, ['valid']);
   assert.deepEqual(disconnected.sort(), ['foreign', 'revoked']);
+});
+
+test('retention runs independently while notification dispatch is blocked', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  let retained!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const retention = new Promise<void>((resolve) => {
+    retained = resolve;
+  });
+  const stop = startJobs({
+    dispatch: async () => {
+      started();
+      await gate;
+    },
+    retain: async () => {
+      retained();
+    },
+    error: () => {},
+    intervalMs: 1,
+    retentionIntervalMs: 5,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    await Promise.race([
+      (async () => {
+        await entered;
+        await retention;
+      })(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Retention waited for blocked dispatch')), 1000);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+
+    release();
+    await stop();
+  }
+});
+
+test('fanout bounds authorization work and shares only within one event', async () => {
+  let active = 0;
+  let maximum = 0;
+  let calls = 0;
+  let notified = 0;
+  const fanout = createFanoutService({
+    connections: async () =>
+      Array.from({ length: 40 }, (_, i) => ({
+        identity: {
+          id: `u${i % 20}`,
+          organization_id: 'org',
+          role: 'viewer' as const,
+          session_hash: `s${i % 20}`,
+        },
+        disconnect: () => {},
+        notify: () => {
+          notified++;
+        },
+      })),
+    authorize: async (hash) => {
+      calls++;
+      active++;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active--;
+
+      return { id: hash, organization_id: 'org', role: 'viewer' as const };
+    },
+  });
+  const event = { eventId: 'event', organizationId: 'org', deviceId: 'device', logId: 'log' };
+
+  await fanout(event);
+  assert.equal(calls, 20);
+  assert.equal(notified, 40);
+  assert(maximum <= 8);
+  await fanout(event);
+  assert.equal(calls, 40, 'Authorization cache escaped a single event');
 });

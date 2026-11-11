@@ -35,7 +35,29 @@ export function logRepository(db: SqlExecutor): LogReader {
 
       params.push(q.limit + 1);
       const { rows } = await db.query<LogRow>(
-        `SELECT l.id,l.device_id,l.vehicle_id,l.received_at,l.device_time,l.protocol,l.packet_type,l.event_type,l.decode_status,l.checksum_status,l.historical,l.normalized_data->'location' AS location,l.normalized_data->'status' AS status,d.imei,v.name AS vehicle_name,v.registration_number FROM device_logs l JOIN devices d ON d.id=l.device_id LEFT JOIN vehicles v ON v.id=l.vehicle_id WHERE ${conditions.join(' AND ')} ORDER BY l.received_at DESC,l.id DESC LIMIT $${params.length}`,
+        `
+          SELECT
+            l.id, l.device_id, l.vehicle_id, l.received_at, l.device_time,
+            to_char(l.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS received_at_exact,
+            l.protocol, l.packet_type, l.event_type, l.decode_status,
+            l.checksum_status, l.historical,
+            l.normalized_data->'location' AS location,
+            l.normalized_data->'status' AS status,
+            jsonb_build_object(
+              'trackingEnabled', l.normalized_data #> '{protocolData,trackingEnabled}',
+              'charging', l.normalized_data #> '{protocolData,charging}',
+              'defenseActivated', l.normalized_data #> '{protocolData,defenseActivated}',
+              'oilElectricityCutOff', l.normalized_data #> '{protocolData,oilElectricityCutOff}',
+              'mileageRaw', l.normalized_data #> '{protocolData,mileageRaw}'
+            ) AS protocol_data,
+            d.imei, v.name AS vehicle_name, v.registration_number
+          FROM device_logs l
+          JOIN devices d ON d.id = l.device_id
+          LEFT JOIN vehicles v ON v.id = l.vehicle_id
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY l.received_at DESC, l.id DESC
+          LIMIT $${params.length}
+        `,
         params,
       );
 

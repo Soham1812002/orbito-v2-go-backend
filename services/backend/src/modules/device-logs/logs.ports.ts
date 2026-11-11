@@ -8,6 +8,7 @@ export interface LogCursor {
 
 export type LogRow = Omit<DeviceLog, 'received_at' | 'device_time'> & {
   received_at: Date;
+  received_at_exact?: string;
   device_time: Date | null;
 };
 

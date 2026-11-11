@@ -16,6 +16,8 @@ export function decodeCursor(cursor: string): LogCursor {
   return schema.parse(value);
 }
 
-export function encodeCursor(time: Date, id: string) {
-  return Buffer.from(JSON.stringify({ time: time.toISOString(), id })).toString('base64url');
+export function encodeCursor(time: Date | string, id: string) {
+  return Buffer.from(
+    JSON.stringify({ time: typeof time === 'string' ? time : time.toISOString(), id }),
+  ).toString('base64url');
 }

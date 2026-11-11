@@ -8,28 +8,42 @@ export function createFanoutService(deps: FanoutDependencies) {
 
     let recipients = 0;
 
-    await Promise.all(
-      sockets.map(async (socket) => {
-        try {
-          const current = await deps.authorize(socket.identity.session_hash);
+    const authorizations = new Map<string, ReturnType<typeof deps.authorize>>();
 
-          if (current.organization_id !== event.organizationId) {
+    // Limit authorization requests and reuse only within this single fanout; no stale auth cache.
+    for (let offset = 0; offset < sockets.length; offset += 8) {
+      await Promise.all(
+        sockets.slice(offset, offset + 8).map(async (socket) => {
+          try {
+            const hash = socket.identity.session_hash;
+            let authorization = authorizations.get(hash);
+
+            if (!authorization) {
+              authorization = deps.authorize(hash);
+              authorizations.set(hash, authorization);
+            }
+
+            const current = await authorization;
+
+            if (current.organization_id !== event.organizationId) {
+              socket.disconnect();
+
+              return;
+            }
+
+            recipients++;
+            socket.notify({ eventId: event.eventId, deviceId: event.deviceId, logId: event.logId });
+          } catch {
+            logger.warn(
+              { event: 'socket.authorization.rejected', outcome: 'rejected' },
+              'Socket authorization rejected',
+            );
             socket.disconnect();
-
-            return;
           }
+        }),
+      );
+    }
 
-          recipients++;
-          socket.notify({ eventId: event.eventId, deviceId: event.deviceId, logId: event.logId });
-        } catch {
-          logger.warn(
-            { event: 'socket.authorization.rejected', outcome: 'rejected' },
-            'Socket authorization rejected',
-          );
-          socket.disconnect();
-        }
-      }),
-    );
     logger.info(
       {
         event: 'notification.emitted',

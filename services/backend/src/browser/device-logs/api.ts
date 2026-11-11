@@ -2,10 +2,12 @@ import type { DeviceLog } from '../../../../../shared/contracts/console.js';
 import { api } from '../shared/http.js';
 import { object, text, nullableText, number, boolean, list } from '../shared/decode.js';
 
-function log(value: unknown): DeviceLog {
+export function decodeLog(value: unknown): DeviceLog {
   const row = object(value);
   const status = row.status == null ? {} : object(row.status);
   const location = row.location == null ? null : object(row.location);
+  const data = row.protocol_data == null ? {} : object(row.protocol_data);
+  const optionalBoolean = (value: unknown) => (value == null ? null : boolean(value));
   const optionalNumber = (value: unknown) => (value == null ? null : number(value));
 
   return {
@@ -26,13 +28,24 @@ function log(value: unknown): DeviceLog {
           latitude: number(location.latitude),
           longitude: number(location.longitude),
           speedKph: optionalNumber(location.speedKph),
+          headingDegrees: optionalNumber(location.headingDegrees),
         }
       : null,
     status: {
-      ignition: status.ignition == null ? null : boolean(status.ignition),
+      ignition: optionalBoolean(status.ignition),
+      gpsValid: optionalBoolean(status.gpsValid),
+      externalPowerVoltage: optionalNumber(status.externalPowerVoltage),
+      batteryVoltage: optionalNumber(status.batteryVoltage),
       batteryLevel: optionalNumber(status.batteryLevel),
       batteryPercent: optionalNumber(status.batteryPercent),
       gsmLevel: optionalNumber(status.gsmLevel),
+    },
+    protocol_data: {
+      trackingEnabled: optionalBoolean(data.trackingEnabled),
+      charging: optionalBoolean(data.charging),
+      defenseActivated: optionalBoolean(data.defenseActivated),
+      oilElectricityCutOff: optionalBoolean(data.oilElectricityCutOff),
+      mileageRaw: optionalNumber(data.mileageRaw),
     },
   };
 }
@@ -40,7 +53,7 @@ function log(value: unknown): DeviceLog {
 export async function loadLogs(query: URLSearchParams) {
   const data = object(await api(`/api/v1/device-logs?${query}`));
 
-  return { items: list(data.items, log), nextCursor: nullableText(data.nextCursor) };
+  return { items: list(data.items, decodeLog), nextCursor: nullableText(data.nextCursor) };
 }
 
 export const loadDetail = (id: string) => api(`/api/v1/device-logs/${id}`);

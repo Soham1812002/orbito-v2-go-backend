@@ -112,17 +112,40 @@ func Concox(raw []byte, profile, identifier, session string, now time.Time) (Eve
 		e.Status["ignition"] = body[0]&2 != 0
 		e.Data["trackingEnabled"] = body[0]&64 != 0
 		e.Data["charging"] = body[0]&4 != 0
+		e.Data["oilElectricityCutOff"] = body[0]&128 != 0
+		e.Data["defenseActivated"] = body[0]&1 != 0
+		e.Data["terminalStatusRaw"] = fmt.Sprintf("0x%02X", body[0])
 		if code == 0x13 {
 			if body[1] > 6 || body[2] > 4 {
 				return Diagnostic(e, "MALFORMED", "Invalid heartbeat level"), nil, nil
 			}
 			e.Status["batteryLevel"] = int(body[1])
 			e.Status["gsmLevel"] = int(body[2])
+			e.Data["languageExtendedStatusRaw"] = fmt.Sprintf("0x%04X", binary.BigEndian.Uint16(body[3:5]))
 		} else {
-			e.Status["batteryVoltage"] = float64(binary.BigEndian.Uint16(body[1:3])) / 100
+			if body[3] > 4 {
+				return Diagnostic(e, "MALFORMED", "Invalid heartbeat level"), nil, nil
+			}
+			e.Status["externalPowerVoltage"] = float64(binary.BigEndian.Uint16(body[1:3])) / 100
 			e.Status["gsmLevel"] = int(body[3])
+			e.Data["languageExtendedStatusRaw"] = fmt.Sprintf("0x%04X", binary.BigEndian.Uint16(body[4:6]))
 		}
 		ack = Reply(code, serial, nil)
+	case 0x94:
+		if len(body) < 1 {
+			return Diagnostic(e, "MALFORMED", "Missing information subtype"), nil, nil
+		}
+		e.Data["informationType"] = fmt.Sprintf("0x%02X", body[0])
+		if body[0] != 0x00 {
+			return Diagnostic(e, "UNSUPPORTED", "Information subtype not enabled"), nil, nil
+		}
+		if len(body) != 3 {
+			return Diagnostic(e, "UNSUPPORTED", "Unsupported voltage information layout"), nil, nil
+		}
+		// V5_UPDATED p.26: subtype00 is a two-byte voltage divided by100.
+		// Section10.2 (p.31) explicitly specifies no server response.
+		e.EventType = "STATUS"
+		e.Status["externalPowerVoltage"] = float64(binary.BigEndian.Uint16(body[1:3])) / 100
 	case 0x22:
 		if len(body) != 29 && len(body) != 33 {
 			return Diagnostic(e, "UNSUPPORTED", "Unsupported location optional-field layout"), nil, nil

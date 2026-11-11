@@ -1,37 +1,7 @@
+import { summarizeLog } from './summary.js';
 import type { DeviceLog } from '../../../../../shared/contracts/console.js';
 import { element } from '../shared/dom.js';
 import { utc } from '../shared/time.js';
-
-function summary(log: DeviceLog) {
-  const p = log.location;
-  const s = log.status ?? {};
-  const parts = [];
-
-  if (p) {
-    parts.push(`${p.latitude.toFixed(6)}, ${p.longitude.toFixed(6)}`);
-    if (p.speedKph != null) {
-      parts.push(`${p.speedKph} km/h`);
-    }
-  }
-
-  if (s.ignition != null) {
-    parts.push(`Ignition ${s.ignition ? 'ON' : 'OFF'}`);
-  }
-
-  if (s.batteryLevel != null) {
-    parts.push(`Battery level ${s.batteryLevel}/6`);
-  }
-
-  if (s.batteryPercent != null) {
-    parts.push(`Battery ${s.batteryPercent}%`);
-  }
-
-  if (s.gsmLevel != null) {
-    parts.push(`GSM level ${s.gsmLevel}`);
-  }
-
-  return parts.join(' · ') || 'No location or status fields provided';
-}
 
 export function renderLogs(
   table: HTMLTableSectionElement,
@@ -56,7 +26,7 @@ export function renderLogs(
       element('strong', `${log.packet_type} · ${log.event_type}`),
       element('small', `${log.protocol}${log.historical ? ' · Historical' : ''}`),
     );
-    row.append(cell, element('td', summary(log)));
+    row.append(cell, element('td', summarizeLog(log)));
     cell = element('td');
     cell.append(element('span', log.decode_status, 'badge'));
     cell.append(element('small', `Checksum: ${log.checksum_status}`));

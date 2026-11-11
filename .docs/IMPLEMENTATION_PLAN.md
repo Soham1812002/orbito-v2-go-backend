@@ -1,6 +1,6 @@
 # GPS vehicle registration and decoded device logs — implementation plan
 
-Status: proposed plan only. Application implementation requires explicit approval.
+Status: historical product scope and design reference; implementation is authorized and running. The current code uses a fsynced file spool, direct parameterized pg SQL, Node test runner and one HTTP Compose deployment. These choices and the dated updates below supersede the earlier SQLite, Drizzle and HTTPS proposals. See README.md for current commands and .docs/PACKET_FLOW_REVIEW.md for the reliability review.
 
 ## 1. Scope and repository findings
 
@@ -304,7 +304,7 @@ Online default may use max(3×expected activity interval,120s), checked every15s
 
 Dependencies: Phases2/3 share canonical contract; Phase4 depends on persisted ingestion, Phase5 on auth/outbox/log APIs; production pilot requires protocol gates for each enabled profile. Use real hardware before declaring a model supported; simulator tests alone cannot establish firmware behavior.
 
-Definition of done: operator adds a real vehicle/name/number/IMEI, provisions supported tracker, sees correctly decoded login/location/heartbeat/event records with accurate units and validation status, filters history and receives authorized live updates. Duplicate retries, service restarts and reconnects behave as documented. No application implementation begins until this plan is approved.
+Definition of done: operator adds a real vehicle/name/number/IMEI, provisions supported tracker, sees correctly decoded login/location/heartbeat/event records with accurate units and validation status, filters history and receives authorized live updates. Duplicate retries, service restarts and reconnects behave as documented. Implementation has been authorized; retain the protocol evidence and verification gates.
 
 ## 13. Future evolution without initial overhead
 
@@ -322,7 +322,7 @@ Later map/alerts/report pages can use saved points/latest state without changing
 4. Confirm who may view raw payload/SIM information, log/raw/history retention and public TCP risk acceptance.
 5. Confirm hosting budget, domain, backup destination and acceptable outage/data-loss targets.
 
-Completeness review: one document covers registration fields/validation, temporal mapping, both pages, decoded versus malformed logs, extensible protocol profiles, ports, common contracts, authentication, persisted/live flows, schema/index/retention, reliability, deployment and phased tests. Remaining device/vendor facts are explicit gates, not assumed solved. Only this Markdown plan is created; AI_AGENT_PROMPT.md and both PDFs remain unchanged.
+Completeness review: one document covers registration fields/validation, temporal mapping, both pages, decoded versus malformed logs, extensible protocol profiles, ports, common contracts, authentication, persisted/live flows, schema/index/retention, reliability, deployment and phased tests. Remaining device/vendor facts are explicit gates, not assumed solved. The original planning step changed only this document; subsequent approved implementation is present in the repository.
 
 ## Current service layout and HTTP deployment (2026-11-08)
 

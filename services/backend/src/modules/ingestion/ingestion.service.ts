@@ -61,7 +61,7 @@ export function createIngestionService(deps: IngestionDependencies) {
               d.id,
               trustedTime
                 ? e.deviceTimestamp
-                : e.eventType === 'LOGIN' || e.eventType === 'HEARTBEAT'
+                : e.eventType === 'LOGIN' || e.eventType === 'HEARTBEAT' || e.eventType === 'STATUS'
                   ? e.receivedAt
                   : null,
             );
@@ -112,6 +112,8 @@ export function createIngestionService(deps: IngestionDependencies) {
               outcome: result.duplicate ? 'duplicate' : 'success',
               protocol: e.protocol,
               packetType: e.packetType,
+              decodeStatus: e.validation.decodeStatus,
+              checksumStatus: e.validation.checksum,
             },
             'Ingestion transaction completed',
           );

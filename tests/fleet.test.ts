@@ -50,6 +50,12 @@ test(
           'utf8',
         ),
       );
+      await pool.query(
+        await readFile(
+          new URL('../services/backend/migrations/003_outbox_lease_token.sql', import.meta.url),
+          'utf8',
+        ),
+      );
       const org = randomUUID();
       const foreignOrg = randomUUID();
       const password = 'integration-test-password';

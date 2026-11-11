@@ -91,9 +91,15 @@ Different packet types carry different fields. A heartbeat may contain battery/n
 The gateway reads packet types and preserves device-provided alert identifiers/codes in `protocolData`. Accepted device events are persisted as decoded logs and delivered to authorized browsers through the same outbox/Socket.IO flow as other messages.
 
 - Markon NRM decoding preserves `alertId` and packet type. Its checksum algorithm is still unverified, and admission is disabled by default. `ALLOW_UNVERIFIED_MARKON=true` explicitly enables diagnostic use; it does not verify the checksum. EPB framing/checksum support remains disabled.
+- Concox `0x94/00` is decoded as a `STATUS` event with `externalPowerVoltage` in volts (the two-byte value divided by 100). It has no GPS position or device timestamp and requires no ACK, as specified on PDF pp. 26/31. Other information subtypes remain diagnostics.
+- Heartbeat flags preserve charging, tracking, defense and fuel/electricity-cutoff status. The tracking flag reports device state; it is not a remote GPS-enable setting. EG02/EG03 external voltage uses `externalPowerVoltage`; older records may still use the legacy `batteryVoltage` field.
+- The log summary shows available coordinates, speed, heading, GPS-fix state, voltage and heartbeat flags. Absent coordinates are labeled "Position not provided"; zero speed/voltage and false flags remain visible. Optional mileage is shown as a raw counter with its unit explicitly unspecified.
+- Valid unsupported packets are retained without consuming the corruption allowance. Eleven consecutive malformed/invalid-checksum inputs still terminate a session; valid inputs reset that streak. Structured packet logs include decode/checksum status and packet length, and session closure includes `closeReason` (for example `peer_reset`, `peer_eof`, `read_timeout` or `malformed_limit`).
 - Concox alarm `0x26` has a decoder for specific documented layouts. Unsupported layouts, language/ACK ambiguities and other unenabled variants remain diagnostics; the gateway does not invent an acknowledgement.
 - Which alarms a real tracker sends depends on its model, firmware, sensors and configuration. Registering a tracker does not prove support for SOS, power-cut, overspeed or any other particular alarm.
 - A separate server-calculated alert/rule engine and SMS/email/push delivery are outside the current two-page scope. Received hardware alarms are available in the decoded log page.
+
+These decoder changes apply to newly received packets. Previously stored diagnostics remain unchanged; there is no automatic replay or database migration for this update. The changes do not make a tracker send location packets and do not introduce device configuration commands.
 
 The protocol PDFs and evidence/gaps are in `.docs/` and [.docs/IMPLEMENTATION_PLAN.md](.docs/IMPLEMENTATION_PLAN.md). IMEI is an identifier, not authentication. Test the actual hardware/firmware before declaring a profile supported.
 
@@ -166,6 +172,38 @@ Browser source is in `services/backend/src/browser/`, with generated modules und
 PostGIS tests need a disposable database supplied through `DATABASE_TEST_URL`; they visibly skip without one. The tests cover service policies, registration/replacement rollback and concurrency, tenant isolation, tickets, ingestion history, outbox retries/leases, retention, real Socket.IO behavior and safe templates. CI provides PostGIS.
 
 Architecture details and the prior refactor verification record are in [.docs/NODE_REFACTOR_PLAN.md](.docs/NODE_REFACTOR_PLAN.md).
+
+## Gateway load and recovery verification
+
+Run `npm run stress:gateway` with Node.js and Docker available. It builds test images, creates an isolated network/database/spool with no published ports, registers synthetic devices through the API, and sends real Concox TCP frames. It checks exact ACKs, decoded fields, stored raw hashes, PostGIS axes, every REST page, intentional GPS retransmission deduplication, notification drain and recovery after backend pause plus gateway SIGKILL. It never uses the running fleet database or `.env` credentials. The harness is included only in the explicit `load-test` Docker build target; the default backend image excludes it.
+
+The default test uses 50 devices and three four-packet rounds per phase. Change the size with `LOAD_DEVICES=10 LOAD_ROUNDS=2 npm run stress:gateway` in a POSIX shell, or set those environment variables in PowerShell before running the command. `LOAD_DEVICES=256 LOAD_ROUNDS=1 npm run stress:gateway` is a bounded capacity probe that can intentionally fail on ACK timeout; it is not a supported capacity claim. Heartbeat, location, voltage and alarm layouts come from the PDF/captured heartbeat; IMEI, serial and UTC are synthetic. The harness ACK deadline is 15 seconds from batch transmission, not a verified tracker timeout.
+
+| Test container | CPU quota | Memory limit |
+| -------------- | --------- | ------------ |
+| Gateway        | 0.5 core  | 256 MiB      |
+| Backend        | 0.5 core  | 384 MiB      |
+| PostGIS        | 0.5 core  | 384 MiB      |
+| Realtime       | 0.25 core | 128 MiB      |
+| Sender         | 0.25 core | 192 MiB      |
+
+The runtime total is capped at 2 CPU cores and 1,344 MiB, with no additional swap allowance. Builds run serially; compiler resource use is separate from these runtime quotas. Reports, samples, manifests and stopped-spool evidence go into ignored `.tmp/gateway-load/`. Labeled test containers/networks/volumes are removed afterwards. The audit merges database and spool identities, deduplicating retry overlap; failed probes retain evidence rather than reporting every sent byte as committed. Notification acceptance is a refresh hint; browsers recover saved history through REST.
+
+See [.docs/GATEWAY_LOAD_RESULTS.md](.docs/GATEWAY_LOAD_RESULTS.md) for measured results and limits. The Go service uses four bounded forwarding workers and preserves each device's queue order. A delayed packet blocks its own device, while other devices can progress. The spool rebuilds an in-memory index at startup and rejects a second process owner. Stored logs include parser revision; old events default to revision 1.
+
+Optional `.env` settings are `MAX_CONNECTIONS=256`, `FORWARD_WORKERS=4` (1?8), `REGISTRY_TIMEOUT=3s` (maximum 5s), `LOGIN_TIMEOUT=15s`, `IDLE_TIMEOUT=180s`, `FRAME_TIMEOUT=15s`, and `SPOOL_MAX_BYTES=1073741824`. Compose also sets CPU and memory limits for regular services. Updates apply migration `003_outbox_lease_token.sql` automatically through the existing migrate service; applied migrations remain unchanged.
+
+To inspect or replay quarantine, stop the gateway first. Fix the underlying registration/configuration/schema issue before retrying. Replay preserves event ID and normalized bytes; it does not re-decode old raw packets.
+
+```bash
+docker compose stop gateway
+docker compose run --rm --no-deps --entrypoint /spoolctl gateway
+# Select a filename returned by the inspection command:
+docker compose run --rm --no-deps --entrypoint /spoolctl gateway -replay 'http_422--FILENAME.json'
+docker compose up -d gateway
+```
+
+Malformed JSON and interrupted writes require inspection; they are not automatically replayed. Quarantine remains within spool capacity. Disk-full/permission/sync failures prevent a successful admission ACK; local disk destruction and tracker packets never received are outside the durability guarantee.
 
 ## Images, data and routine operations
 
