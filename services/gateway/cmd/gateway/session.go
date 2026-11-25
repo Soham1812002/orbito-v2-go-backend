@@ -46,6 +46,9 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 	}()
 	for {
 		timeout := limits.idleTimeout
+		if profile == protocol.GT06NProfile {
+			timeout = max(timeout, 4*time.Minute)
+		}
 		if identifier == "" {
 			timeout = limits.loginTimeout
 		}
@@ -99,11 +102,26 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 			if family == "MARKON_AIS140" {
 				event, ack, err = protocol.Markon(frame, "markon-v1-diagnostic", session, now)
 			} else {
-				parseProfile := profile
-				if parseProfile == "" {
-					parseProfile = "concox-v29-standard"
+				if identifier == "" {
+					var loginID string
+					loginID, err = protocol.IdentifyConcoxLogin(frame)
+					if err != nil {
+						closeReason = "login_required"
+						return
+					}
+					registered, err = g.lookup(ctx, loginID, trace)
+					if err != nil {
+						packetLog.Warn("device login rejected", "event", "session.login.rejected", "outcome", "rejected", "reason", err.Error())
+						closeReason = "registration_rejected"
+						return
+					}
+					profile = registered.Profile
 				}
-				event, ack, err = protocol.Concox(frame, parseProfile, identifier, session, now)
+				if profile == protocol.GT06NProfile {
+					event, ack, err = protocol.GT06N(frame, identifier, session, now, limits.gt06nUTCOffsetMinutes)
+				} else {
+					event, ack, err = protocol.Concox(frame, profile, identifier, session, now)
+				}
 			}
 			if err != nil {
 				bad++
@@ -132,7 +150,9 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 					closeReason = "login_required"
 					return
 				}
-				registered, err = g.lookup(ctx, event.Identifier, trace)
+				if family == "MARKON_AIS140" {
+					registered, err = g.lookup(ctx, event.Identifier, trace)
+				}
 				if err != nil {
 					packetLog.Warn("device login rejected", "event", "session.login.rejected", "outcome", "rejected", "reason", err.Error())
 					closeReason = "registration_rejected"
@@ -143,7 +163,7 @@ func (g *gateway) session(ctx context.Context, conn net.Conn, family string) {
 					closeReason = "profile_mismatch"
 					return
 				}
-				if family == "CONCOX" && profile != "concox-v29-standard" && profile != "concox-v29-eg02" {
+				if family == "CONCOX" && profile != "concox-v29-standard" && profile != "concox-v29-eg02" && profile != protocol.GT06NProfile {
 					closeReason = "profile_mismatch"
 					return
 				}

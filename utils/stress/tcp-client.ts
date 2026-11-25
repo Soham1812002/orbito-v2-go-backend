@@ -5,8 +5,8 @@ import { frame } from './protocol.js';
 
 export const ACK_TIMEOUT_MS = 15000;
 
-export async function tracker(host: string, timeoutMs = ACK_TIMEOUT_MS) {
-  const socket = createConnection({ host, port: 5002 });
+export async function tracker(host: string, timeoutMs = ACK_TIMEOUT_MS, port = 5002) {
+  const socket = createConnection({ host, port });
 
   socket.setNoDelay(true);
   let buffer: Buffer = Buffer.alloc(0);

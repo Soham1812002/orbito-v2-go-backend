@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 )
@@ -11,6 +12,7 @@ type sessionLimits struct {
 	maxConnections                          int
 	loginTimeout, idleTimeout, frameTimeout time.Duration
 	registryTimeout                         time.Duration
+	gt06nUTCOffsetMinutes                   *int
 }
 
 func (l sessionLimits) withDefaults() sessionLimits {
@@ -37,6 +39,13 @@ func (l sessionLimits) withDefaults() sessionLimits {
 
 func readSessionLimits() (sessionLimits, error) {
 	l := sessionLimits{}.withDefaults()
+	if value := os.Getenv("GT06N_UTC_OFFSET_MINUTES"); value != "" {
+		offset, err := strconv.Atoi(value)
+		if err != nil || offset < -720 || offset > 840 {
+			return l, fmt.Errorf("invalid GT06N_UTC_OFFSET_MINUTES (expected -720..840)")
+		}
+		l.gt06nUTCOffsetMinutes = &offset
+	}
 	n, err := strconv.Atoi(env("MAX_CONNECTIONS", "256"))
 	if err != nil || n < 1 || n > 4096 {
 		return l, fmt.Errorf("invalid MAX_CONNECTIONS")

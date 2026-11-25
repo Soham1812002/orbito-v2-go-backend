@@ -18,6 +18,15 @@ export const profiles = [
     diagnostic: false,
   },
   {
+    id: 'concox-gt06n-v1',
+    protocol: 'CONCOX',
+    manufacturer: 'Concox',
+    model: 'GT06N (01/12/13/16)',
+    port: 5002,
+    diagnostic: false,
+    note: 'Device time is unverified until its UTC offset is confirmed and configured on the gateway. Validate actual firmware before production.',
+  },
+  {
     id: 'concox-v29-eg02',
     protocol: 'CONCOX',
     manufacturer: 'Concox',
@@ -37,7 +46,12 @@ export const vehicleInput = z
       .max(32)
       .refine((v) => /[a-z0-9]/i.test(v), 'Must contain letters or numbers'),
     imei: z.string().regex(/^\d{15}$/),
-    profileId: z.enum(['markon-v1-diagnostic', 'concox-v29-standard', 'concox-v29-eg02']),
+    profileId: z.enum([
+      'markon-v1-diagnostic',
+      'concox-v29-standard',
+      'concox-v29-eg02',
+      'concox-gt06n-v1',
+    ]),
     model: z.string().trim().min(1).max(80),
     firmware: z.string().trim().max(80).default(''),
     vehicleType: z.enum(['car', 'van', 'truck', 'bus', 'other']).default('other'),

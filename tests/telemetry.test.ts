@@ -73,3 +73,13 @@ test('UI shows coordinates, zero speed/heading, GPS fix and raw mileage without 
     'Position not provided',
   );
 });
+
+test('GT06N summary exposes time/history uncertainty without presenting it as live UTC data', () => {
+  const log = decodeLog({
+    ...row,
+    protocol_data: { timestampQuality: 'UNVERIFIED_TIMEZONE', historyStatus: 'NOT_PROVIDED' },
+  });
+
+  assert.match(summarizeLog(log), /Device time unverified \(timezone unknown\)/);
+  assert.match(summarizeLog(log), /Live\/history status not provided/);
+});

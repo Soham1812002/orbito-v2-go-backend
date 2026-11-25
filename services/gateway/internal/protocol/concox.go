@@ -3,7 +3,6 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
-	"strconv"
 	"time"
 )
 
@@ -59,32 +58,13 @@ func binaryTime(data []byte) (*string, error) {
 	return &s, nil
 }
 func Concox(raw []byte, profile, identifier, session string, now time.Time) (Event, []byte, error) {
-	e := Base(raw, profile, session, now)
-	e.Protocol = "CONCOX"
-	e.Identifier = identifier
-	if len(raw) < 10 {
-		return e, nil, fmt.Errorf("short packet")
+	e, code, serial, body, err := concoxEnvelope(raw, profile, identifier, session, now)
+	if err != nil || e.Validation.DecodeStatus != "DECODED" {
+		return e, nil, err
 	}
-	width := 1
-	if raw[0] == 0x79 {
-		width = 2
+	if profile != "concox-v29-standard" && profile != "concox-v29-eg02" {
+		return Diagnostic(e, "UNSUPPORTED", "Unknown Concox profile"), nil, nil
 	}
-	start := 2 + width
-	end := len(raw) - 6
-	if end < start+1 {
-		return e, nil, fmt.Errorf("short body")
-	}
-	code := raw[start]
-	e.PacketType = fmt.Sprintf("0x%02X", code)
-	serial := binary.BigEndian.Uint16(raw[len(raw)-6:])
-	seq := strconv.Itoa(int(serial))
-	e.Source.Sequence = &seq
-	if CRC(raw[2:len(raw)-4]) != binary.BigEndian.Uint16(raw[len(raw)-4:]) {
-		e.Validation.Checksum = "INVALID"
-		return Diagnostic(e, "INVALID_CHECKSUM", "CRC mismatch"), nil, nil
-	}
-	e.Validation.Checksum = "VALID"
-	body := raw[start+1 : end]
 	var ack []byte
 	switch code {
 	case 0x01:

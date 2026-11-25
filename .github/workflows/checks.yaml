@@ -26,7 +26,15 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run quality
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - run: go build -o ../../.tmp/gt06n-gateway ./cmd/gateway
+        working-directory: services/gateway
       - run: npm test
+        env:
+          GATEWAY_TEST_BINARY: ${{ github.workspace }}/.tmp/gt06n-gateway
       - run: node utils/scripts/setup-local.ts
       - run: docker compose --profile tools config --quiet
         env:
@@ -56,6 +64,7 @@ jobs:
           go test -race ./...
       - run: go test ./internal/protocol -run '^$' -fuzz FuzzFrame -fuzztime 10s
       - run: go test ./internal/protocol -run '^$' -fuzz FuzzConcoxDecode -fuzztime 10s
+      - run: go test ./internal/protocol -run '^$' -fuzz FuzzGT06NDecode -fuzztime 10s
   docker-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20

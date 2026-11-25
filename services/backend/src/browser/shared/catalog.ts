@@ -26,6 +26,7 @@ export async function loadProfiles(): Promise<Profile[]> {
       model: text(row.model),
       port: number(row.port),
       diagnostic: boolean(row.diagnostic),
+      note: row.note == null ? undefined : text(row.note),
     };
   });
 }

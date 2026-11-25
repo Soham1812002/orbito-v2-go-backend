@@ -28,6 +28,7 @@ export interface Profile {
   model: string;
   port: number;
   diagnostic: boolean;
+  note?: string;
 }
 
 export interface DeviceLog {
@@ -59,6 +60,8 @@ export interface DeviceLog {
     batteryVoltage?: number | null;
   } | null;
   protocol_data?: {
+    timestampQuality?: string | null;
+    historyStatus?: string | null;
     trackingEnabled?: boolean | null;
     charging?: boolean | null;
     defenseActivated?: boolean | null;

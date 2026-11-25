@@ -66,5 +66,13 @@ export function summarizeLog(log: DeviceLog): string {
     parts.push(`Mileage ${data.mileageRaw} (raw; unit unspecified)`);
   }
 
+  if (data.timestampQuality === 'UNVERIFIED_TIMEZONE') {
+    parts.push('Device time unverified (timezone unknown)');
+  }
+
+  if (data.historyStatus === 'NOT_PROVIDED') {
+    parts.push('Live/history status not provided');
+  }
+
   return parts.join(' · ');
 }

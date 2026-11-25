@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { vehicleInput, registrationKey } from '../shared/contracts/fleet.js';
+import { vehicleInput, registrationKey, profiles } from '../shared/contracts/fleet.js';
 import { decodedEvent } from '../shared/contracts/events.js';
 import { fingerprint } from '../services/backend/src/modules/ingestion/ingestion.policy.js';
 import { hashPassword, verifyPassword } from '../services/backend/src/modules/auth/passwords.js';
@@ -34,6 +34,22 @@ test('unavailable values remain null; bad coordinates/checksum combinations reje
 
   bad.validation.checksum = 'INVALID';
   assert.throws(() => decodedEvent.parse(bad));
+});
+test('GT06N is an explicit Concox registration profile, including leading-zero identifiers', () => {
+  const input = vehicleInput.parse({
+    name: 'GT06N demo',
+    registrationNumber: 'GT-06',
+    imei: '012345678901234',
+    profileId: 'concox-gt06n-v1',
+    model: 'GT06N',
+  });
+
+  assert.equal(input.imei, '012345678901234');
+  const profile = profiles.find((p) => p.id === input.profileId)!;
+
+  assert.equal(profile.protocol, 'CONCOX');
+  assert.equal(profile.port, 5002);
+  assert.throws(() => vehicleInput.parse({ ...input, profileId: 'concox-gt06n-auto' }));
 });
 test('HTTP retry and device retransmission identities are independent', () => {
   const e = event();

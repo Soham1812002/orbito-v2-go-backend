@@ -44,6 +44,8 @@ export function logRepository(db: SqlExecutor): LogReader {
             l.normalized_data->'location' AS location,
             l.normalized_data->'status' AS status,
             jsonb_build_object(
+              'timestampQuality', l.normalized_data #> '{protocolData,timestampQuality}',
+              'historyStatus', l.normalized_data #> '{protocolData,historyStatus}',
               'trackingEnabled', l.normalized_data #> '{protocolData,trackingEnabled}',
               'charging', l.normalized_data #> '{protocolData,charging}',
               'defenseActivated', l.normalized_data #> '{protocolData,defenseActivated}',

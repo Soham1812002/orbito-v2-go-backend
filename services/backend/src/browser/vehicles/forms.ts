@@ -51,7 +51,7 @@ export function initializeForms(profiles: Profile[], onSaved: () => Promise<void
     query('#profile-note').textContent = editing
       ? 'IMEI changes require an explicit tracker replacement.'
       : profile
-        ? `Device TCP port: ${profile.port}. ${profile.diagnostic ? 'Markon checksum is unverified. Gateway admission is disabled unless explicitly enabled by the operator.' : 'Documented parser profile; validate actual model and firmware on hardware before production.'}`
+        ? `Device TCP port: ${profile.port}. ${profile.note ?? (profile.diagnostic ? 'Markon checksum is unverified. Gateway admission is disabled unless explicitly enabled by the operator.' : 'Documented parser profile; validate actual model and firmware on hardware before production.')}`
         : '';
   }
 

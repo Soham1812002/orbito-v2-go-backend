@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -132,9 +133,10 @@ func TestReadCloseReasons(t *testing.T) {
 // A Reader may return final bytes together with EOF/reset. The bytes still belong to the stream.
 type scriptedConn struct {
 	net.Conn
-	reads    [][]byte
-	terminal error
-	writes   bytes.Buffer
+	reads     [][]byte
+	terminal  error
+	writes    bytes.Buffer
+	deadlines []time.Time
 }
 
 func (c *scriptedConn) Read(p []byte) (int, error) {
@@ -149,8 +151,11 @@ func (c *scriptedConn) Read(p []byte) (int, error) {
 	}
 	return n, nil
 }
-func (c *scriptedConn) Write(p []byte) (int, error)      { return c.writes.Write(p) }
-func (c *scriptedConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *scriptedConn) Write(p []byte) (int, error) { return c.writes.Write(p) }
+func (c *scriptedConn) SetReadDeadline(deadline time.Time) error {
+	c.deadlines = append(c.deadlines, deadline)
+	return nil
+}
 func (c *scriptedConn) SetWriteDeadline(time.Time) error { return nil }
 func (c *scriptedConn) Close() error                     { return nil }
 func TestSessionProcessesFinalBytesBeforeReadError(t *testing.T) {
@@ -231,5 +236,104 @@ func TestSpoolFullDoesNotAcknowledgeLogin(t *testing.T) {
 	g.session(context.Background(), conn, "CONCOX")
 	if conn.writes.Len() != 0 || q.Stats().Pending != 0 {
 		t.Fatal("Failed admission was acknowledged")
+	}
+}
+
+func TestGT06NSessionProfileIsolationAndDurability(t *testing.T) {
+	loginBody, _ := hex.DecodeString("0123456789012345")
+	gtLogin := protocol.Reply(1, 1, loginBody)
+	legacyLogin := protocol.Reply(1, 1, append(append([]byte{}, loginBody...), 0x70, 0, 0x32, 1))
+	for _, tc := range []struct {
+		name, profile                      string
+		login                              []byte
+		enabled, duplicate, full, accepted bool
+	}{
+		{"gt06n", protocol.GT06NProfile, gtLogin, true, false, false, true},
+		{"standard", "concox-v29-standard", legacyLogin, true, false, false, true},
+		{"eg02", "concox-v29-eg02", legacyLogin, true, false, false, true},
+		{"gt06n-login-on-standard", "concox-v29-standard", gtLogin, true, false, false, false},
+		{"standard-login-on-gt06n", protocol.GT06NProfile, legacyLogin, true, false, false, false},
+		{"unknown-profile", "unknown", gtLogin, true, false, false, false},
+		{"markon-on-concox", "markon-v1-diagnostic", gtLogin, true, false, false, false},
+		{"disabled", protocol.GT06NProfile, gtLogin, false, false, false, false},
+		{"duplicate", protocol.GT06NProfile, gtLogin, true, true, false, false},
+		{"spool-full", protocol.GT06NProfile, gtLogin, true, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("imei") != "123456789012345" {
+					t.Error("Wrong registry identifier")
+				}
+				json.NewEncoder(w).Encode(map[string]any{"items": []device{{IMEI: "123456789012345", Profile: tc.profile, Enabled: tc.enabled}}})
+			}))
+			defer registry.Close()
+			capacity := int64(1 << 20)
+			if tc.full {
+				capacity = 1
+			}
+			q, err := spool.Open(t.TempDir(), capacity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer q.Close()
+			g := &gateway{queue: q, api: registry.URL, client: registry.Client(), sessions: map[string]net.Conn{}}
+			if tc.duplicate {
+				g.sessions["123456789012345"] = &scriptedConn{}
+			}
+			conn := &scriptedConn{reads: [][]byte{tc.login}, terminal: io.EOF}
+			g.wg.Add(1)
+			g.session(context.Background(), conn, "CONCOX")
+			if tc.accepted {
+				if q.Stats().Pending != 1 || !bytes.Equal(conn.writes.Bytes(), protocol.Reply(1, 1, nil)) {
+					t.Fatal("Registered login not durably admitted/ACKed")
+				}
+				_, data, err := q.Claim()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var e protocol.Event
+				if err := json.Unmarshal(data, &e); err != nil {
+					t.Fatal(err)
+				}
+				if e.Profile != tc.profile || e.EventType != "LOGIN" {
+					t.Fatal("Event decoded under wrong profile")
+				}
+			} else if q.Stats().Pending != 0 || conn.writes.Len() != 0 {
+				t.Fatal("Rejected login admitted/ACKed")
+			}
+		})
+	}
+}
+
+func TestGT06NSessionBindsIdentityAndPreservesDiagnostics(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"items":[{"imei":"123456789012345","profile":"concox-gt06n-v1","enabled":true}]}`)
+	}))
+	defer registry.Close()
+	q, err := spool.Open(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	loginBody, _ := hex.DecodeString("0123456789012345")
+	login := protocol.Reply(1, 1, loginBody)
+	heartbeat := protocol.Reply(0x13, 2, []byte{0x44, 1, 4, 0, 1})
+	corrupt := append([]byte{}, heartbeat...)
+	corrupt[len(corrupt)-4] ^= 1
+	unsupported := protocol.Reply(0x22, 3, make([]byte, 29))
+	other := protocol.Reply(1, 4, []byte{0, 0, 0, 0, 0, 0, 0, 1})
+	conn := &scriptedConn{reads: [][]byte{login, append(append(append(corrupt, unsupported...), heartbeat...), other...)}, terminal: io.EOF}
+	g := &gateway{queue: q, api: registry.URL, client: registry.Client(), sessions: map[string]net.Conn{}}
+	g.wg.Add(1)
+	g.session(context.Background(), conn, "CONCOX")
+	want := append(protocol.Reply(1, 1, nil), protocol.Reply(0x13, 2, nil)...)
+	if q.Stats().Pending != 4 || !bytes.Equal(conn.writes.Bytes(), want) {
+		t.Fatal("Diagnostic ACK or identity changed")
+	}
+	if len(conn.deadlines) < 2 || time.Until(conn.deadlines[1]) < 230*time.Second {
+		t.Fatal("GT06N heartbeat idle margin missing")
+	}
+	if len(g.sessions) != 0 {
+		t.Fatal("Closed session identity leaked")
 	}
 }

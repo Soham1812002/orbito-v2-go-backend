@@ -43,3 +43,7 @@ Subtype `0x94/00` is now supported for the exact documented one-byte subtype plu
 Heartbeat bit6 is preserved as a reported tracking flag, not proof that a persistent configuration setting must be enabled. Other documented heartbeat flags and the two raw language/extended-status bytes are retained. EG02/EG03 external voltage is labeled as external power voltage. Mileage remains a raw optional counter because its unit is not established here.
 
 The session malformed-input limit now counts consecutive malformed/CRC-invalid inputs rather than valid unsupported messages. Capture evidence showed peer-originated resets after the first information packet; this correction is not claimed to explain those specific resets. Packet diagnostics and session close reasons expose the distinction without recording raw payloads or SIM identifiers.
+
+## GT06N profile addition (2026-11-26)
+
+The separate GT06N document is retained as `GT06N_protocol.pdf`; its hash, printed/physical page mapping, errata and packet allowlist are in [GT06N_INTEGRATION.md](GT06N_INTEGRATION.md). GT06N `0x01/0x12/0x13/0x16` traffic uses the existing Concox TCP5002 listener after explicit registered-profile selection. Basic ACKs return on the same connection after fsynced admission. Address replies, commands and SMS workflows are not enabled. This ordinary GT06N profile accepts only the evidenced `7878` envelope; it does not inherit V5 extended-frame/message capabilities. Adding it introduces no new public port and no resource-isolation guarantee.

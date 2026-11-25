@@ -41,6 +41,8 @@ export function decodeLog(value: unknown): DeviceLog {
       gsmLevel: optionalNumber(status.gsmLevel),
     },
     protocol_data: {
+      timestampQuality: nullableText(data.timestampQuality),
+      historyStatus: nullableText(data.historyStatus),
       trackingEnabled: optionalBoolean(data.trackingEnabled),
       charging: optionalBoolean(data.charging),
       defenseActivated: optionalBoolean(data.defenseActivated),
